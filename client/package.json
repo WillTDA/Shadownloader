@@ -3,8 +3,39 @@
   "version": "1.0.0",
   "description": "Shadownloader is an ephemeral self-hosted file sharing system that prioritises anonymity and data privacy. Upload a file, and the it disappears the moment it is downloaded by someone else.",
   "main": "src/main.js",
+  "funding": {
+    "type": "buymeacoffee",
+    "url": "https://www.buymeacoffee.com/willtda"
+  },
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WillTDA/Shadownloader"
+  },
+  "build": {
+    "appId": "com.diamonddigitaldev.shadownloaderclient",
+    "productName": "Shadownloader Client",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "src/img/shadownloader.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "src/img/shadownloader.icns"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "src/img/shadownloader.png"
+    }
   },
   "keywords": [
     "files",
@@ -20,9 +51,10 @@
   "license": "GPL-3.0-only",
   "devDependencies": {
     "electron": "^39.0.0",
-    "electron-store": "^11.0.2"
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
-    "bootstrap": "^5.3.8"
+    "bootstrap": "^5.3.8",
+    "electron-store": "^11.0.2"
   }
 }
