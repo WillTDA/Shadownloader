@@ -1,0 +1,2 @@
+- ensure only FILES/ZIPs can be uploaded (drag n drop zone bug!)
+- block empty (0 bytes) file uploads on client and server

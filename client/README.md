@@ -41,17 +41,21 @@ To install Shadownloader Client:
 2. Extract or install the app as you would any other Electron app.
 3. Launch the Shadownloader Client and connect to your preferred server.
 
+**Note:** macOS and Linux builds have not yet been officially compiled/tested since I lack the necessary hardware/software :(
+Any help towards this goal would be greatly appreciated.
 
 ## Usage
 
-To send a file:
+Sending a file:
 1. **Launch** the client.
 2. **Enter the server address** you want to connect to (for example, your home server or a private Shadownloader instance).
 3. **Select a file** to upload or drag and drop it into the interface.
 4. **Select your options** to enable/disable E2EE and change the file lifetime.
 5. **Simply hit upload!** When it finishes, **copy the generated download link** and share it securely.
 
-To receive a file:
+**Protip:** If you're on Windows, you can simply right-click a file, and choose either **"Share with Shadownloader"** or **"Share with Shadownloader (E2EE)"** from the context menu to silently upload the file in the background. You'll be notified when the upload finishes, and the link will automatically be copied to your clipboard.
+
+Receiving a file:
 1. **Launch** your preferred web browser.
 2. **Paste the download link** into the address bar.
 3. **Wait** for the file to download. End-to-end encrypted files will be decrypted locally and saved your web browser, otherwise they are downloaded as usual.

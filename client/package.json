@@ -18,12 +18,26 @@
   "build": {
     "appId": "com.diamonddigitaldev.shadownloaderclient",
     "productName": "Shadownloader Client",
+    "files": [
+      "**/*"
+    ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ],
-      "icon": "src/img/shadownloader.ico"
+      "icon": "src/img/shadownloader.ico",
+      "fileAssociations": [
+        {
+          "ext": "*",
+          "name": "All Files",
+          "role": "Viewer"
+        }
+      ]
+    },
+    "nsis": {
+      "perMachine": true,
+      "createDesktopShortcut": true,
+      "include": "installer.nsh"
     },
     "mac": {
       "target": [
@@ -33,7 +47,9 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb",
+        "rpm"
       ],
       "icon": "src/img/shadownloader.png"
     }
