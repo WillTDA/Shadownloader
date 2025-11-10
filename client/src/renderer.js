@@ -275,6 +275,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         async function performUpload() {
             await checkServerCompatibility();
 
+            if (fileLifetimeUnitSelect.value !== 'unlimited') {
+                const value = parseFloat(fileLifetimeValueInput.value);
+                if (isNaN(value) || value <= 0) {
+                    fileLifetimeValueInput.value = 0.5;
+                }
+            }
+
             if (!selectedFile) {
                 window.electronAPI.uploadFinished({ status: 'error', error: 'File is missing or cannot be read.' });
                 return;
@@ -412,7 +419,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         function getLifetimeInMs() {
             const unit = fileLifetimeUnitSelect.value;
             const value = parseFloat(fileLifetimeValueInput.value, 10) || 0;
-            if (unit === 'unlimited' || value === 0) return 0;
+            if (unit === 'unlimited' || value <= 0) return 0;
             const multipliers = {
                 minutes: 60 * 1000,
                 hours: 60 * 60 * 1000,
