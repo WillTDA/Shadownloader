@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         let selectedFile = null;
         const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
         function isFile(file) {
             return new Promise((resolve) => {
@@ -374,6 +375,44 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
+        async function attemptChunkUpload(url, options, retries = 5, backoff = 1000, maxRetries = 5) {
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    // Throw to trigger the catch block for retry logic
+                    throw new Error(`Error: ${response.status}`);
+                }
+                return response;
+            } catch (err) {
+                // If the error is an AbortError (user cancelled), do not retry.
+                if (err.name === 'AbortError') throw err;
+
+                if (retries > 0) {
+                    console.warn(`Chunk upload failed. Retrying... Error: ${err.message}`);
+                    let remainingTime = backoff;
+                    const updateInterval = 100;
+                    const currentAttempt = maxRetries - retries + 1;
+
+                    while (remainingTime > 0) {
+                        const secondsLeft = (remainingTime / 1000).toFixed(1);
+
+                        window.electronAPI.uploadProgress({
+                            text: `Chunk upload failed. Retrying in ${secondsLeft}s... (${currentAttempt}/${maxRetries})`
+                        });
+
+                        await new Promise(resolve => setTimeout(resolve, updateInterval));
+                        remainingTime -= updateInterval;
+                    }
+
+                    window.electronAPI.uploadProgress({
+                        text: `Chunk upload failed. Retrying now... (${currentAttempt}/${maxRetries})`
+                    });
+                    return attemptChunkUpload(url, options, retries - 1, backoff * 2, maxRetries);
+                }
+                throw err;
+            }
+        }
+
         async function uploadChunks(uploadId, serverUrl, cryptoKey) {
             const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
             for (let i = 0; i < totalChunks; i++) {
@@ -381,29 +420,32 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
                 let chunk = selectedFile.slice(start, end);
 
-                if (cryptoKey) {
-                    const chunkBuffer = await chunk.arrayBuffer();
-                    chunk = await encryptData(chunkBuffer, cryptoKey);
-                }
-
-                const chunkResponse = await fetch(`${serverUrl}/upload/chunk`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/octet-stream',
-                        'X-Upload-ID': uploadId,
-                    },
-                    body: chunk,
-                });
-
-                if (!chunkResponse.ok) {
-                    throw new Error(`Chunk ${i + 1} failed to upload.`);
-                }
-
                 const percentComplete = ((i + 1) / totalChunks) * 100;
                 window.electronAPI.uploadProgress({
                     text: `Sending chunk ${i + 1} of ${totalChunks}...`,
                     percent: percentComplete
                 });
+
+                if (cryptoKey) {
+                    const chunkBuffer = await chunk.arrayBuffer();
+                    chunk = await encryptData(chunkBuffer, cryptoKey);
+                }
+
+                const headers = {
+                    'Content-Type': 'application/octet-stream',
+                    'X-Upload-ID': uploadId,
+                    'X-File-Offset': String(start)
+                };
+
+                const chunkResponse = await attemptChunkUpload(`${serverUrl}/upload/chunk`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: chunk,
+                });
+
+                if (!chunkResponse.ok) {
+                    throw new Error(`Chunk ${i + 1} failed to upload. Status: ${chunkResponse.status}`);
+                }
             }
         }
 

@@ -1,6 +1,6 @@
 {
   "name": "shadownloader-client",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "Shadownloader is an ephemeral self-hosted file sharing system that prioritises anonymity and data privacy. Upload a file, and the it disappears the moment it is downloaded by someone else.",
   "main": "src/main.js",
   "funding": {

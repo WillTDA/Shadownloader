@@ -190,13 +190,25 @@ app.post('/upload/init', limiter, (req, res) => {
 
 app.post('/upload/chunk', (req, res) => {
     const uploadId = req.headers['x-upload-id'];
+    const offsetHeader = req.headers['x-file-offset'];
     if (!ongoingUploads.has(uploadId)) return res.status(400).send('Invalid upload ID.');
+
+    // Validate offset
+    const offset = parseInt(offsetHeader || '0', 10);
+    if (isNaN(offset) || offset < 0) {
+        return res.status(400).send('Invalid file offset.');
+    }
+
     const { tempFilePath } = ongoingUploads.get(uploadId);
-    const writeStream = fs.createWriteStream(tempFilePath, { flags: 'a', mode: 0o600 });
+    const writeStream = fs.createWriteStream(tempFilePath, { 
+        flags: 'r+', 
+        start: offset 
+    });
 
     pipeline(req, writeStream, (err) => {
         if (err) {
             log('error', `Upload chunk pipeline error for ${uploadId}: ${err.message}`);
+            // If the connection drops here, the client will catch the error and retry sending the exact same chunk to the exact same offset.
             return res.status(500).send('Write failed.');
         }
         try {
