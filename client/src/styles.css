@@ -3,19 +3,20 @@ html {
 }
 
 body {
-    background-color: #212529;
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
 }
 
 #drop-zone {
-    border: 2px dashed #495057;
+    border: 2px dashed var(--bs-border-color);
     border-radius: 0.375rem;
     cursor: pointer;
     transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
 }
 
 #drop-zone.drag-over {
-    background-color: #343a40;
-    border-color: #6c757d;
+    background-color: var(--bs-secondary-bg);
+    border-color: var(--bs-gray-400);
 }
 
 #upload-btn {
@@ -33,13 +34,13 @@ body {
 .help-icon {
     vertical-align: sub;
     font-size: 1.25rem !important;
-    color: #adb5bd;
+    color: var(--bs-secondary-color);
 }
 
 /* Preferences/Credits Page Styles */
 body.popup-window {
-    background-color: #282828;
-    color: #ffffff;
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     padding: 20px;
 }
@@ -60,21 +61,22 @@ body.popup-window {
     width: 100%;
     padding: 10px;
     font-size: 16px;
-    background-color: #4a4a4a;
-    color: #ffffff;
-    border: none;
+    background-color: var(--bs-secondary-bg);
+    color: var(--bs-body-color);
+    border: 1px solid var(--bs-border-color);
     border-radius: 5px;
     margin-bottom: 20px;
     transition: background-color 0.3s;
 }
 
 .popup-window select:hover {
-    background-color: #5a5a5a;
+    background-color: var(--bs-tertiary-bg);
 }
 
 .popup-window select:focus {
     outline: none;
-    background-color: #5a5a5a;
+    background-color: var(--bs-tertiary-bg);
+    border-color: var(--bs-primary);
 }
 
 .popup-window .btn {
@@ -83,9 +85,9 @@ body.popup-window {
     padding: 10px;
     margin-top: 20px;
     font-size: 16px;
-    background-color: #4a4a4a;
-    color: #ffffff;
-    border: none;
+    background-color: var(--bs-secondary-bg);
+    color: var(--bs-body-color);
+    border: 1px solid var(--bs-border-color);
     border-radius: 5px;
     transition: background-color 0.3s;
     text-align: center;
@@ -93,7 +95,7 @@ body.popup-window {
 }
 
 .popup-window .btn:hover {
-    background-color: #5a5a5a;
+    background-color: var(--bs-tertiary-bg);
 }
 
 .popup-window .btn:focus {
@@ -108,14 +110,15 @@ body.popup-window {
 }
 
 .popup-window span {
-    color: #c796ff;
+    color: var(--bs-primary);
     text-decoration: none;
     transition: all 0.3s;
 }
 
 .popup-window span:hover {
-    color: #a75aff;
+    color: var(--bs-primary);
     text-decoration: underline;
+    opacity: 0.8;
 }
 
 #credits-logo {

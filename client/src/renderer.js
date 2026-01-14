@@ -274,7 +274,11 @@ document.addEventListener('DOMContentLoaded', async () => {
          * It reports progress and final status back to the main process via IPC.
          */
         async function performUpload() {
-            await checkServerCompatibility();
+            const serverCheck = await checkServerCompatibility();
+            if (!serverCheck.compatible) {
+                window.electronAPI.uploadFinished({ status: 'error', error: serverCheck.message || 'Server is not compatible.' });
+                return;
+            }
 
             if (fileLifetimeUnitSelect.value !== 'unlimited') {
                 const value = parseFloat(fileLifetimeValueInput.value);
@@ -490,7 +494,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         async function checkServerCompatibility() {
             uploadStatus.textContent = '';
             const serverUrl = await cleanServerUrl(serverUrlInput.value.trim());
-            if (!serverUrl) return;
+            if (!serverUrl) return { compatible: false, message: '' };
 
             try {
                 const clientVersion = await window.electronAPI.getClientVersion();
@@ -499,9 +503,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const serverVersion = serverInfo.version;
 
                 if (!serverVersion) {
-                    uploadStatus.textContent = 'Warning: Server version is unknown. Compatibility issues may occur.';
+                    const message = 'Warning: Server version is unknown. Compatibility issues may occur.';
+                    uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-warning';
-                    return;
+                    return { compatible: true, message };
                 }
 
                 const [clientMajor, clientMinor, _clientPatch] = clientVersion.split('.').map(Number);
@@ -509,23 +514,33 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (clientMajor !== serverMajor) {
                     uploadBtn.disabled = true;
-                    uploadStatus.textContent = `Error: Incompatible versions. Client is v${clientVersion}, Server is v${serverVersion}. Please update.`;
+                    const message = `Error: Incompatible versions. Client is v${clientVersion}, Server is v${serverVersion}. Please update.`;
+                    uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
+                    return { compatible: false, message };
                 } else if (clientMinor > serverMinor) {
-                    uploadStatus.textContent = `Warning: Client (v${clientVersion}) is newer than Server (v${serverVersion}). Some features may not work.`;
+                    const message = `Warning: Client (v${clientVersion}) is newer than Server (v${serverVersion}). Some features may not work.`;
+                    uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-warning';
+                    return { compatible: true, message };
                 } else if (serverMinor > clientMinor) {
-                    uploadStatus.textContent = `Info: A new client version is available. (Server: v${serverVersion}, Client: v${clientVersion})`;
+                    const message = `Info: A new client version is available. (Server: v${serverVersion}, Client: v${clientVersion})`;
+                    uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-info';
+                    return { compatible: true, message };
                 } else {
                     // Versions are compatible
-                    uploadStatus.textContent = `Server: v${serverVersion}, Client: v${clientVersion}`;
+                    const message = `Server: v${serverVersion}, Client: v${clientVersion}`;
+                    uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-info';
+                    return { compatible: true, message };
                 }
             } catch (error) {
-                uploadStatus.textContent = 'Could not connect to the server to check compatibility.';
+                const message = 'Could not connect to the server to check compatibility.';
+                uploadStatus.textContent = message;
                 uploadStatus.className = 'form-text mt-1 text-warning';
                 console.error('Compatibility check failed:', error);
+                return { compatible: false, message };
             }
         }
 

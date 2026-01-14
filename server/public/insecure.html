@@ -142,6 +142,16 @@
     </footer>
 
     <script nonce="%%NONCE%%">
+        (() => {
+            const mql = window.matchMedia("(prefers-color-scheme: dark)");
+            const root = document.documentElement;
+
+            const apply = () => root.setAttribute("data-bs-theme", mql.matches ? "dark" : "light");
+
+            apply();
+            mql.addEventListener?.("change", apply);
+        })();
+
         fetch('/')
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');

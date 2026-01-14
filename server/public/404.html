@@ -13,6 +13,7 @@
     <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
     <title>Shadownloader</title>
+    
     <link href="assets/bootstrap.min.css" rel="stylesheet">
     <link href="assets/material-icons-round.css" rel="stylesheet">
     
@@ -126,6 +127,16 @@
     </footer>
 
     <script nonce="%%NONCE%%">
+        (() => {
+            const mql = window.matchMedia("(prefers-color-scheme: dark)");
+            const root = document.documentElement;
+
+            const apply = () => root.setAttribute("data-bs-theme", mql.matches ? "dark" : "light");
+
+            apply();
+            mql.addEventListener?.("change", apply);
+        })();
+
         fetch('/')
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');

@@ -5,6 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shadownloader Client | Credits</title>
+    <script>
+        (() => {
+            const mql = window.matchMedia("(prefers-color-scheme: dark)");
+            const root = document.documentElement;
+
+            const apply = () => root.setAttribute("data-bs-theme", mql.matches ? "dark" : "light");
+
+            apply();
+            mql.addEventListener?.("change", apply);
+        })();
+    </script>
     <link rel="stylesheet" href="../node_modules/bootstrap/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="./styles.css">
     <link rel="stylesheet" href="./icons/material-icons-round.css">

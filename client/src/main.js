@@ -372,7 +372,7 @@ Menu.setApplicationMenu(menu);
 function createCreditsWindow() {
     const creditsWindow = new BrowserWindow({
         width: 875,
-        height: 500,
+        height: 525,
         parent: mainWindow,
         modal: true,
         resizable: false,
