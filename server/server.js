@@ -181,6 +181,15 @@ if (Number(rateLimitMaxRequests) > 0 && Number(rateLimitWindowMs) > 0) {
     });
 }
 
+// Verify chunk uploads are valid, otherwise apply rate limiting
+const uploadAuth = (req, res, next) => {
+    const uploadId = req.headers['x-upload-id'] || req.body?.uploadId;
+    if (uploadId && ongoingUploads.has(uploadId)) {
+        return next();
+    }
+    return limiter(req, res, next);
+};
+
 app.post('/upload/init', limiter, (req, res) => {
     const uploadId = uuidv4();
     const { filename, lifetime, isEncrypted, totalSize, totalChunks } = req.body;
@@ -252,9 +261,9 @@ app.post('/upload/init', limiter, (req, res) => {
     res.status(200).json({ uploadId });
 });
 
-app.post('/upload/chunk', (req, res) => {
+app.post('/upload/chunk', uploadAuth, (req, res) => {
     const uploadId = req.headers['x-upload-id'];
-    const chunkIndex = parseInt(req.headers['x-chunk-index']);
+    let chunkIndex = req.headers['x-chunk-index'];
     const clientHash = req.headers['x-chunk-hash'];
 
     if (!ongoingUploads.has(uploadId)) return res.status(410).send('Upload session expired or invalid.');
@@ -263,6 +272,13 @@ app.post('/upload/chunk', (req, res) => {
     // Validate Index
     if (isNaN(chunkIndex) || chunkIndex < 0 || chunkIndex >= session.totalChunks) {
         return res.status(400).send('Invalid chunk index.');
+    }
+
+    chunkIndex = parseInt(chunkIndex);
+
+    // Validate Hash
+    if (typeof clientHash !== 'string' || !/^[a-f0-9]{64}$/.test(clientHash)) { // SHA-256 hash format
+        return res.status(400).send('Invalid chunk hash.');
     }
 
     if (session.receivedChunks.has(chunkIndex)) return res.status(200).send('Chunk already received.');
@@ -277,10 +293,8 @@ app.post('/upload/chunk', (req, res) => {
         if (buffer.length > (5 * 1024 * 1024) + 1024) return res.status(413).send('Chunk too large.');
 
         // 2. Verify Integrity
-        if (clientHash) {
-            const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
-            if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
-        }
+        const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
+        if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
 
         // Calculate Offset
         // If encrypted, every chunk (except last) is 5MB + 28 bytes. If plain, 5MB.
@@ -303,11 +317,22 @@ app.post('/upload/chunk', (req, res) => {
     });
 });
 
-app.post('/upload/complete', (req, res) => {
+app.post('/upload/complete', uploadAuth, (req, res) => {
     const { uploadId } = req.body;
-    if (!ongoingUploads.has(uploadId)) {
-        return res.status(400).json({ error: 'Invalid upload ID.' });
+    if (!ongoingUploads.has(uploadId)) return res.status(400).json({ error: 'Invalid upload ID.' });
+
+    const session = ongoingUploads.get(uploadId);
+
+    // 1. Verify Chunk Count
+    // We expect exactly N unique chunks.
+    if (session.receivedChunks.size !== session.totalChunks) {
+        log('warn', `Upload ${uploadId} incomplete: ${session.receivedChunks.size}/${session.totalChunks} chunks.`);
+
+        return res.status(400).json({
+            error: `Upload incomplete. Server received ${session.receivedChunks.size} of ${session.totalChunks} chunks.`
+        });
     }
+
     const uploadInfo = ongoingUploads.get(uploadId);
     const fileId = uuidv4();
     const finalPath = path.join(uploadDir, fileId);
@@ -319,6 +344,11 @@ app.post('/upload/complete', (req, res) => {
             fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the empty temp file
             ongoingUploads.delete(uploadId);
             return res.status(400).json({ error: 'Empty files (0 bytes) cannot be uploaded.' });
+        } else if (stats.size !== uploadInfo.totalSize) {
+            log('warn', `Upload size mismatch for ID: ${uploadId}. Expected: ${uploadInfo.totalSize}, Actual: ${stats.size}`);
+            fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the invalid temp file
+            ongoingUploads.delete(uploadId);
+            return res.status(400).json({ error: 'Uploaded rejected. File size does not match expected size.' });
         }
     } catch (e) {
         log('error', `Could not stat temp file for size check: ${e.message}`);
@@ -417,10 +447,10 @@ app.get('/api/file/:fileId', limiter, (req, res) => {
     // Capture size before streaming
     const fileSize = fs.statSync(fileInfo.path).size;
     res.setHeader('Content-Length', fileSize);
-    
+
     const readStream = fs.createReadStream(fileInfo.path);
     readStream.pipe(res);
-    
+
     readStream.on('close', () => {
         // Update storage immediately
         currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
