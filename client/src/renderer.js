@@ -510,7 +510,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (clientMajor !== serverMajor) {
                     uploadBtn.disabled = true;
-                    const message = `Error: Incompatible versions. Client is v${clientVersion}, Server is v${serverVersion}. Please update.`;
+                    const message = `Error: Incompatible versions. Client is v${clientVersion}, Server is v${serverVersion}. Please use matching major versions.`;
                     uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
                     return { compatible: false, message };
