@@ -20,6 +20,7 @@ const helmet = require('helmet').default;
 const cors = require('cors');
 const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
+const { renderFile: renderEjsFile } = require('./lib/ejs-lite');
 const { v4: uuidv4 } = require('uuid');
 
 const serverName = process.env.SERVER_NAME || 'Shadownloader Server';
@@ -160,6 +161,9 @@ if (enableUpload) {
 log('info', 'Configuring server endpoints and middleware...');
 
 app.set('trust proxy', 1); // Trust the first hop from a reverse proxy
+app.engine('ejs', renderEjsFile);
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
 app.use(cors());
 app.use(express.static('public'));
 app.use(express.json());
@@ -497,7 +501,7 @@ if (enableUpload) {
     });
 }
 
-apiRouter.get('/info', limiter, (req, res) => {
+const getCapabilities = () => {
     const uploadCapabilities = { enabled: enableUpload };
     if (enableUpload) {
         uploadCapabilities.maxSizeMB = maxFileSizeMB;
@@ -505,20 +509,77 @@ apiRouter.get('/info', limiter, (req, res) => {
         uploadCapabilities.e2ee = uploadEnableE2EE;
     }
 
+    return {
+        upload: uploadCapabilities,
+        p2p: {
+            enabled: enableP2P
+        },
+        webUI: {
+            enabled: enableWebUI
+        }
+    };
+};
+
+apiRouter.get('/info', limiter, (req, res) => {
     res.status(200).json({
         name: serverName,
         version: version,
-        capabilities: {
-            upload: uploadCapabilities,
-            p2p: {
-                enabled: enableP2P
-            },
-            webUI: {
-                enabled: enableWebUI
-            }
-        }
+        capabilities: getCapabilities()
     });
 });
+
+app.use('/api', apiRouter);
+if (enableUpload) {
+    app.use('/upload', uploadRouter);
+
+    app.get('/:fileId', limiter, (req, res) => {
+        const sendHTML = (htmlFilePath, status) => {
+            const nonce = res.locals.nonce;
+            return fs.readFile(htmlFilePath, 'utf8', (err, data) => {
+                if (err) {
+                    log('error', `Failed to read ${path.basename(htmlFilePath)}: ${err.message}`);
+                    return res.status(500).send('Server error');
+                }
+                const modifiedHtml = data.replace(/%%NONCE%%/g, nonce);
+                res.status(status).setHeader('Content-Type', 'text/html').send(modifiedHtml);
+            });
+        };
+
+        const fileId = req.params.fileId;
+        const fileInfo = fileDatabase.get(fileId);
+
+        if (!fileInfo) return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+
+        if (fileInfo.isEncrypted) {
+            if (!uploadEnableE2EE) {
+                log('warn', 'Blocked access to an encrypted file because upload E2EE is disabled.');
+                return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+            }
+
+            // The Web Crypto API requires a secure context (HTTPS).
+            // If we are behind a reverse proxy, check if the original request was secure.
+            if (req.protocol !== 'https') {
+                log('warn', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
+                return sendHTML(path.join(__dirname, 'public', 'insecure.html'), 400);
+            }
+        }
+
+        return res.status(200).render('download', {
+            fileId,
+            serverName
+        });
+    });
+
+}
+
+if (enableP2P) {
+    app.get('/p2p/:shareCode', limiter, (req, res) => {
+        res.status(200).render('download-p2p', {
+            shareCode: req.params.shareCode,
+            serverName
+        });
+    });
+}
 
 app.use('/api', apiRouter);
 if (enableUpload) {
@@ -561,7 +622,15 @@ if (enableUpload) {
 }
 
 app.get('/', limiter, (req, res) => {
-    res.send("Shadownloader Server is running.");
+    if (!enableWebUI) {
+        return res.send("Shadownloader Server is running.");
+    }
+
+    return res.status(200).render('index', {
+        serverName,
+        version,
+        capabilities: getCapabilities()
+    });
 });
 
 if (enableUpload) {
