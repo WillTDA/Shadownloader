@@ -363,8 +363,8 @@ export class ShadownloaderClient {
 
     const caps = serverInfo?.capabilities?.upload;
     if (!caps) {
-      // In theory we could allow upload, but you rely on caps for limits + e2ee.
-      throw new ShadownloaderProtocolError('Server did not provide upload capabilities.');
+      // The server does not support uploads.
+      throw new ShadownloaderValidationError('Server does not support file uploads.');
     }
 
     // maxSizeMB: 0 means unlimited
