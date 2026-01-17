@@ -12,7 +12,7 @@
     <meta data-hid="theme-color" name="theme-color" content="#57F287">
     <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
-    <title>Shadownloader Decryption Utility</title>
+    <title>Shadownloader Download</title>
     <link href="assets/bootstrap.min.css" rel="stylesheet">
     <link href="assets/material-icons-round.css" rel="stylesheet">
     <script src="assets/streamsaver.min.js"></script>
@@ -41,7 +41,7 @@
         }
 
         .container-main {
-            max-width: 850px;
+            max-width: 860px;
             width: 100%;
         }
 
@@ -54,9 +54,21 @@
             font-size: 3rem;
         }
 
-        #trust-statement {
-            font-size: 0.875rem;
-            opacity: 0.8;
+        .file-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--bs-secondary-color);
+        }
+
+        .file-value {
+            font-weight: 600;
+        }
+
+        #trust-statement,
+        #encryption-statement {
+            font-size: 0.9rem;
+            opacity: 0.85;
         }
 
         .footer {
@@ -89,7 +101,7 @@
         }
 
         #download-button {
-            margin-top: 1rem;
+            margin-top: 1.25rem;
         }
 
         .progress-info {
@@ -103,21 +115,41 @@
     <main>
         <div class="container-main text-center">
             <div id="title-container" class="d-flex align-items-center justify-content-center">
-                <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle" loading="lazy" style="display:block;">
+                <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle" loading="lazy"
+                    style="display:block;">
                 <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Shadownloader</h1>
             </div>
-            <p class="lead mb-4">A lightweight, open-source, privacy-focused file sharing tool.</p>
+            <p class="lead mb-4">Verify your file details before starting the download.</p>
 
             <div id="status-card" class="card shadow-sm">
                 <div class="card-body p-4">
-                    <div id="icon-container" class="mb-3 text-primary"><span
-                            class="material-icons-round">shield_lock</span>
+                    <div id="icon-container" class="mb-3 text-primary"><span class="material-icons-round">download</span>
                     </div>
-                    <h5 class="card-title mb-2" id="status-title">Preparing your file...</h5>
-                    <p class="card-text text-body-secondary" id="status-message">The download should begin
-                        automatically.
-                    </p>
-                    <button id="download-button" class="btn btn-primary" style="display: none;">Start Manually</button>
+                    <h5 class="card-title mb-2" id="status-title">Preparing your download...</h5>
+                    <p class="card-text text-body-secondary" id="status-message">Fetching file information securely.</p>
+
+                    <div id="file-details" class="mt-4 text-start" style="display: none;">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="file-label">File name</div>
+                                <div class="file-value" id="file-name">Loading...</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="file-label">File size</div>
+                                <div class="file-value" id="file-size">Loading...</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="file-label">Encryption</div>
+                                <div class="file-value" id="file-encryption">Loading...</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="file-label">File ID</div>
+                                <div class="file-value text-break" id="file-id">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="download-button" class="btn btn-primary" style="display: none;">Start Download</button>
                     <div id="progress-container" class="mt-3" style="display: none;">
                         <div class="progress" role="progressbar" style="height: 6px;">
                             <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
@@ -128,13 +160,15 @@
                     </div>
                 </div>
             </div>
-            <div id="trust-statement" class="text-body-secondary mt-4">
-                <strong>Why am I seeing this page?</strong><br>
-                <p>The uploader enabled End-to-End Encryption (E2EE) for this file.<br>This page decrypts the file
-                    directly
-                    in your browser using the key in the URL.<br>Nobody else, not even the server, can read the true contents
-                    of your file.
-                </p>
+            <div id="trust-statement" class="text-body-secondary mt-4" style="display: none;">
+                <strong>Why the manual download?</strong><br>
+                <p class="mb-0">This page makes it clear who is serving the file and lets you confirm the details before
+                    starting the download.</p>
+            </div>
+            <div id="encryption-statement" class="text-body-secondary mt-3" style="display: none;">
+                <strong>End-to-End Encryption enabled</strong><br>
+                <p class="mb-0">Your file will be decrypted locally in your browser using the key in the URL. The server never
+                    sees the decrypted data.</p>
             </div>
         </div>
     </main>
@@ -167,7 +201,38 @@
         const downloadButton = document.getElementById('download-button');
         const progressText = document.getElementById('progress-text');
         const trustStatement = document.getElementById('trust-statement');
+        const encryptionStatement = document.getElementById('encryption-statement');
+        const fileDetails = document.getElementById('file-details');
+        const fileNameEl = document.getElementById('file-name');
+        const fileSizeEl = document.getElementById('file-size');
+        const fileEncryptionEl = document.getElementById('file-encryption');
+        const fileIdEl = document.getElementById('file-id');
         const ENCRYPTED_CHUNK_OVERHEAD = 12 + 16; // 12 bytes IV + 16 bytes auth tag
+
+        const downloadState = {
+            fileId: null,
+            isEncrypted: false,
+            keyB64: null,
+            fileName: null,
+            sizeBytes: 0
+        };
+
+        function showError(title, message) {
+            statusTitle.textContent = title;
+            statusMessage.textContent = message;
+            downloadButton.style.display = 'none';
+            progressContainer.style.display = 'none';
+            card.classList.add('border', 'border-danger');
+            iconContainer.innerHTML = '<span class="material-icons-round text-danger">error</span>';
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes && bytes !== 0) return 'Unknown';
+            if (bytes === 0) return '0 bytes';
+            const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return `${parseFloat((bytes / Math.pow(1024, i)).toFixed(2))} ${units[i]}`;
+        }
 
         async function importKey(keyB64) {
             const keyBytes = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
@@ -180,26 +245,13 @@
             return await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
         }
 
-        async function getDecryptedFilename(fileId, key) {
-            const metaResponse = await fetch(`/api/file/${fileId}/meta`);
-            if (!metaResponse.ok) throw new Error('Could not fetch file metadata.');
-            const { encryptedFilename } = await metaResponse.json();
-
-            // Convert base64 directly to Uint8Array, avoiding the need for fetch() on a data: URL
+        async function decryptFilename(encryptedFilename, key) {
             const dataBuffer = Uint8Array.from(atob(encryptedFilename), c => c.charCodeAt(0));
-
             const decryptedBuffer = await decryptData(new Uint8Array(dataBuffer), key);
             return new TextDecoder().decode(decryptedBuffer);
         }
 
-        function formatBytes(bytes) {
-            if (bytes === 0) return '0 bytes';
-            const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(1024));
-            return `${parseFloat((bytes / Math.pow(1024, i)).toFixed(2))} ${units[i]}`;
-        }
-
-        async function processDecryption(fileId, keyB64) {
+        async function processDecryption(fileId, keyB64, originalFilename) {
             downloadButton.style.display = 'none';
             progressContainer.style.display = 'block';
             progressBar.style.width = '0%';
@@ -210,10 +262,6 @@
 
             try {
                 const key = await importKey(keyB64);
-                statusTitle.textContent = 'Starting Decryption...';
-                statusMessage.textContent = 'Retrieving filename...';
-                const originalFilename = await getDecryptedFilename(fileId, key);
-
                 statusTitle.textContent = 'Starting Download...';
                 statusMessage.textContent = `Your browser will now ask you where to save "${originalFilename}".`;
 
@@ -229,7 +277,7 @@
                 let buffer = new Uint8Array(0);
 
                 statusTitle.textContent = 'Downloading & Decrypting';
-                statusMessage.textContent = `Streaming directly to file...`;
+                statusMessage.textContent = 'Streaming directly to file...';
                 card.classList.remove('border-danger');
                 card.classList.add('border', 'border-primary');
                 iconContainer.innerHTML = '<span class="material-icons-round text-primary">shield_lock</span>';
@@ -267,7 +315,7 @@
 
                 await writer.close();
 
-                progressBar.style.width = `100%`;
+                progressBar.style.width = '100%';
                 statusTitle.textContent = 'Download Complete!';
                 statusMessage.textContent = `Your file "${originalFilename}" has been successfully decrypted and saved.`;
                 card.classList.remove('border-danger');
@@ -285,36 +333,84 @@
             }
         }
 
-        window.onload = () => {
-            if (!window.isSecureContext) {
-                downloadButton.remove()
-                progressContainer.remove()
-                trustStatement.style.display = 'none';
-                statusTitle.textContent = 'Secure Connection Required';
-                statusMessage.textContent = 'End-to-end encrypted files can only be downloaded over a secure HTTPS connection.';
-                card.classList.add('border', 'border-danger');
-                iconContainer.innerHTML = '<span class="material-icons-round text-danger">lock</span>';
+        async function startDownload() {
+            if (downloadState.isEncrypted) {
+                if (!downloadState.keyB64) {
+                    showError('Missing Decryption Key', 'The link does not include the key needed to decrypt this file.');
+                    return;
+                }
+                return processDecryption(downloadState.fileId, downloadState.keyB64, downloadState.fileName);
+            }
+
+            downloadButton.disabled = true;
+            downloadButton.textContent = 'Starting Download...';
+            statusTitle.textContent = 'Download Starting';
+            statusMessage.textContent = 'Your browser should begin downloading the file shortly.';
+            iconContainer.innerHTML = '<span class="material-icons-round text-primary">download</span>';
+            window.location.href = `/api/file/${downloadState.fileId}`;
+        }
+
+        async function loadMetadata() {
+            const fileId = window.location.pathname.split('/').pop();
+            if (!fileId) {
+                showError('Invalid Link', 'The file ID is missing from this link.');
                 return;
             }
 
-            const hash = window.location.hash.substring(1);
-            const fileId = window.location.pathname.split('/').pop();
+            downloadState.fileId = fileId;
+            fileIdEl.textContent = fileId;
 
-            if (hash && fileId) {
-                downloadButton.onclick = () => processDecryption(fileId, hash);
-                processDecryption(fileId, hash);
-            } else {
-                downloadButton.remove()
-                progressContainer.remove()
-                downloadButton.style.display = 'none';
-                statusTitle.textContent = 'Invalid Link';
-                statusMessage.textContent = 'The required decryption key was not found in the URL.';
-                card.classList.add('border', 'border-danger');
-                iconContainer.innerHTML = '<span class="material-icons-round text-danger">error</span>';
+            try {
+                const response = await fetch(`/api/file/${fileId}/meta`);
+                if (!response.ok) {
+                    showError('File Not Found', 'This file link is invalid or has already expired.');
+                    return;
+                }
+
+                const metadata = await response.json();
+                downloadState.isEncrypted = Boolean(metadata.isEncrypted);
+                downloadState.sizeBytes = metadata.sizeBytes;
+                fileEncryptionEl.textContent = metadata.isEncrypted ? 'Encrypted (E2EE)' : 'Standard download';
+                fileSizeEl.textContent = formatBytes(metadata.sizeBytes);
+
+                trustStatement.style.display = 'block';
+
+                if (metadata.isEncrypted) {
+                    encryptionStatement.style.display = 'block';
+
+                    if (!window.isSecureContext) {
+                        showError('Secure Connection Required', 'Encrypted files can only be downloaded over HTTPS.');
+                        return;
+                    }
+
+                    const hash = window.location.hash.substring(1);
+                    if (!hash) {
+                        showError('Missing Decryption Key', 'The decryption key was not found in the URL.');
+                        return;
+                    }
+
+                    downloadState.keyB64 = hash;
+                    const key = await importKey(hash);
+                    downloadState.fileName = await decryptFilename(metadata.encryptedFilename, key);
+                } else {
+                    downloadState.fileName = metadata.filename;
+                }
+
+                fileNameEl.textContent = downloadState.fileName || 'Unknown';
+                fileDetails.style.display = 'block';
+                downloadButton.style.display = 'inline-block';
+                downloadButton.addEventListener('click', startDownload);
+                statusTitle.textContent = 'Ready to download';
+                statusMessage.textContent = 'Review the file details above, then click Start Download.';
+            } catch (error) {
+                console.error(error);
+                showError('Download Error', 'We could not load the file details. Please try again later.');
             }
-        };
+        }
 
-        fetch('/')
+        loadMetadata();
+
+        fetch('/api/info')
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');
                 return response.json();
