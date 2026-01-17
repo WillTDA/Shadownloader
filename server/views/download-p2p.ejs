@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Receive files directly with Shadownloader.">
+    <meta name="theme-color" content="#57F287">
+    <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+    <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
+    <title>Direct Transfer | <%= serverName %></title>
+    <link href="/assets/bootstrap.min.css" rel="stylesheet">
+    <link href="/assets/material-icons-round.css" rel="stylesheet">
+    <link href="/css/base.css" rel="stylesheet">
+    <link href="/css/download.css" rel="stylesheet">
+</head>
+
+<body>
+    <main class="page">
+        <div class="container-main text-center" data-share-code="<%= shareCode %>">
+            <div class="title-row">
+                <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" loading="lazy">
+                <h1>Shadownloader</h1>
+            </div>
+            <p class="subtitle">Direct transfer is coming soon. Share the code below with the sender.</p>
+
+            <div class="download-card card-shell">
+                <div class="card-body p-4">
+                    <div id="icon-container" class="mb-3 text-primary"><span class="material-icons-round">share</span></div>
+                    <h5 class="card-title mb-2">Awaiting connection...</h5>
+                    <p class="card-text text-body-secondary">Provide your recipient with the code below.</p>
+
+                    <div class="share-code-box" id="share-code-box"><%= shareCode %></div>
+                    <div class="share-link">
+                        <span class="link-label">Share this link:</span>
+                        <div class="link-row">
+                            <input type="text" id="share-link" value="" readonly>
+                            <button class="btn btn-outline-secondary" id="copy-link">Copy</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="text-body-secondary mt-3">Keep this page open until the transfer completes.</div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container text-center">
+            <%= serverName %> |
+            <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+        </div>
+    </footer>
+
+    <script src="/js/theme.js" defer></script>
+    <script src="/js/p2p-download.js" defer></script>
+</body>
+
+</html>

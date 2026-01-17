@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="A lightweight, open-source, privacy-focused file sharing tool.">
+    <meta name="theme-color" content="#57F287">
+    <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+    <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
+    <title><%= serverName %></title>
+    <link href="/assets/bootstrap.min.css" rel="stylesheet">
+    <link href="/assets/material-icons-round.css" rel="stylesheet">
+    <link href="/css/base.css" rel="stylesheet">
+    <link href="/css/web-ui.css" rel="stylesheet">
+</head>
+
+<body data-capabilities='<%- JSON.stringify(capabilities) %>'>
+    <main class="page">
+        <header class="page-header text-center">
+            <div class="brand">
+                <img src="/assets/icon.png" alt="Shadownloader Icon" width="40" height="40" loading="lazy">
+                <h1>Shadownloader</h1>
+            </div>
+            <p class="subtitle">A lightweight, open-source, privacy-focused file sharing tool.</p>
+        </header>
+
+        <section class="panel-grid">
+            <div class="panel-card drop-panel">
+                <div class="drop-inner" id="drop-zone">
+                    <span class="material-icons-round">cloud_upload</span>
+                    <h2>Drag &amp; Drop File Here</h2>
+                    <span class="or">or</span>
+                    <label class="btn btn-secondary">
+                        Select File
+                        <input type="file" id="file-input" hidden>
+                    </label>
+                </div>
+                <div class="drop-footer" id="upload-hint">
+                    Max upload size: <span id="max-upload-size">Loading...</span><br>
+                    Anything over will use direct transfer (P2P).
+                </div>
+            </div>
+
+            <div class="panel-card options-panel">
+                <div class="options-header">
+                    <h2>Options</h2>
+                    <p>Choose how to upload your data.</p>
+                </div>
+
+                <div class="option-group">
+                    <div class="option-title">Upload Mode</div>
+                    <div class="toggle-group" role="group" aria-label="Upload mode">
+                        <button class="toggle-button is-active" data-mode="standard">Standard</button>
+                        <button class="toggle-button" data-mode="p2p">Direct Transfer</button>
+                    </div>
+                    <small class="option-helper" id="mode-help">Uploads are stored on the server until downloaded.</small>
+                </div>
+
+                <div class="option-group">
+                    <label class="option-title" for="file-lifetime">File Lifetime</label>
+                    <div class="lifetime-control">
+                        <input type="number" id="file-lifetime" min="1" value="1">
+                        <select id="lifetime-unit">
+                            <option value="hours">Hours</option>
+                            <option value="days" selected>Days</option>
+                        </select>
+                    </div>
+                    <small class="option-helper" id="lifetime-help">Files expire automatically based on server limits.</small>
+                </div>
+
+                <div class="option-group">
+                    <div class="option-title">Enable Encryption?</div>
+                    <div class="toggle-group" role="group" aria-label="Encryption">
+                        <button class="toggle-button is-active" data-encryption="true">Yes</button>
+                        <button class="toggle-button" data-encryption="false">No</button>
+                    </div>
+                    <small class="option-helper" id="encryption-help">Encrypt locally before upload for extra privacy.</small>
+                </div>
+
+                <button class="btn btn-primary btn-lg" id="start-upload" disabled>Start Upload</button>
+                <div class="option-note" id="upload-disabled" hidden>
+                    Uploads are disabled on this server.
+                </div>
+            </div>
+        </section>
+
+        <section class="share-card">
+            <div class="share-title">Enter Sharing Code</div>
+            <div class="share-input">
+                <input type="text" id="share-code" placeholder="Enter code">
+                <button class="btn btn-dark" id="share-go">
+                    <span class="material-icons-round">arrow_forward</span>
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container text-center">
+            <%= serverName %> <span class="server-version">v<%= version %></span> |
+            <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+        </div>
+    </footer>
+
+    <script src="/js/theme.js" defer></script>
+    <script src="/js/web-ui.js" defer></script>
+</body>
+
+</html>

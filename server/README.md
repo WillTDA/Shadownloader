@@ -31,12 +31,17 @@ When running with E2EE, your server acts purely as a **blind data relay** — th
 
 | Variable | Default | Description |
 |-----------|----------|-------------|
-| `ENABLE_E2EE` | `false` | Enables end-to-end encryption. Requires HTTPS reverse proxy for secure operation. |
-| `PRESERVE_UPLOADS` | `false` | Keeps uploaded files after restarts. Use with mapped volume (`/usr/src/app/uploads`). |
-| `MAX_FILE_SIZE_MB` | `100` | Maximum allowed file size in MB. Set to `0` for unlimited. |
+| `ENABLE_UPLOAD` | `false` | Enables the upload protocol and its routes. |
+| `ENABLE_P2P` | `true` | Enables the Peer Mode (P2P) capability flag. |
+| `ENABLE_WEB_UI` | `true` | Enables the Web UI capability flag. |
+| `UPLOAD_ENABLE_E2EE` | `false` | Enables end-to-end encryption for uploads. Requires HTTPS reverse proxy for secure operation. |
+| `UPLOAD_PRESERVE_UPLOADS` | `false` | Keeps uploaded files after restarts. Use with mapped volume (`/usr/src/app/uploads`). |
+| `UPLOAD_MAX_FILE_SIZE_MB` | `100` | Maximum allowed file size in MB. Set to `0` for unlimited. |
+| `UPLOAD_MAX_STORAGE_GB` | `10` | Maximum storage quota in GB. Set to `0` for unlimited. |
+| `UPLOAD_MAX_FILE_LIFETIME_HOURS` | `24` | Maximum file lifetime in hours. Set to `0` for unlimited. |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in milliseconds. Set `0` to disable. |
 | `RATE_LIMIT_MAX_REQUESTS` | `25` | Requests allowed per window. Set `0` to disable. |
-| `ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Interval for cleaning up incomplete uploads. Set `0` to disable. |
+| `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Interval for cleaning up incomplete uploads. Set `0` to disable. |
 
 
 ## Installation (Manual)
@@ -58,30 +63,41 @@ You can easily deploy the server via Docker.
 ```bash
 docker run -d \
   -p 52443:52443 \
-  -e ENABLE_E2EE=true \
-  -e PRESERVE_UPLOADS=true \
-  -e MAX_FILE_SIZE_MB=1000 \
+  -e ENABLE_UPLOAD=true \
+  -e UPLOAD_ENABLE_E2EE=true \
+  -e UPLOAD_PRESERVE_UPLOADS=true \
+  -e UPLOAD_MAX_FILE_SIZE_MB=1000 \
   -v /path/to/uploads:/usr/src/app/uploads \
   --name shadownloader \
   willtda/shadownloader-server:latest
 ```
 
-The uploads folder should be mapped to persistent storage if `PRESERVE_UPLOADS=true`.
+The uploads folder should be mapped to persistent storage if `UPLOAD_PRESERVE_UPLOADS=true`.
 
 
 ## Server Info Endpoint
 
-Accessing the root (`/`) returns:
+Accessing the info endpoint (`/api/info`) returns:
 
 ```json
 {
-  "status": "ok",
-  "version": "1.0.0",
-  "sizeLimit": 100
+  "name": "Shadownloader Server",
+  "version": "<version>",
+  "capabilities": {
+    "upload": {
+      "enabled": false
+    },
+    "p2p": {
+      "enabled": true
+    },
+    "webUI": {
+      "enabled": true
+    }
+  }
 }
 ```
 
-This is useful for clients to confirm server status, version, and limits before upload.
+This is useful for clients to confirm server status, version, and capabilities before upload.
 
 
 ## Reverse Proxy Setup

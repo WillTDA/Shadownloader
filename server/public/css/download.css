@@ -1,0 +1,85 @@
+.container-main {
+    max-width: 860px;
+    margin: 0 auto;
+}
+
+.title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    justify-content: center;
+}
+
+.title-row h1 {
+    font-weight: 600;
+    font-size: 2rem;
+    margin: 0;
+}
+
+.subtitle {
+    margin-top: 0.75rem;
+    color: var(--bs-secondary-color);
+}
+
+.download-card {
+    margin-top: 2rem;
+    text-align: center;
+}
+
+.file-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--bs-secondary-color);
+}
+
+.file-value {
+    font-weight: 600;
+}
+
+#download-button {
+    margin-top: 1.25rem;
+    border-radius: 0.9rem;
+    padding: 0.6rem 1.5rem;
+}
+
+.progress-info {
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+}
+
+.share-code-box {
+    margin: 1.5rem auto 1rem;
+    padding: 0.8rem 1rem;
+    border-radius: 0.75rem;
+    background: rgba(0, 0, 0, 0.08);
+    font-weight: 600;
+    letter-spacing: 0.25rem;
+}
+
+.share-link {
+    margin-top: 1rem;
+    text-align: left;
+}
+
+.link-row {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.link-row input {
+    flex: 1;
+    border-radius: 0.75rem;
+    border: 1px solid var(--sd-border-color);
+    padding: 0.4rem 0.75rem;
+}
+
+@media (max-width: 768px) {
+    .link-row {
+        flex-direction: column;
+    }
+
+    .share-code-box {
+        letter-spacing: 0.15rem;
+    }
+}
