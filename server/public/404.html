@@ -4,19 +4,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" data-hid="description" content="A lightweight, open-source, privacy-focused file sharing tool.">
+    <meta name="description" data-hid="description"
+        content="A lightweight, open-source, privacy-focused file sharing tool.">
     <meta name="og:site_name" data-hid="og:site_name" content="Shadownloader | Privacy-first File Sharing">
     <meta name="og:title" data-hid="og:title" content="Shadownloader">
-    <meta name="og:description" data-hid="og:description" content="A lightweight, open-source, privacy-focused file sharing tool.">
+    <meta name="og:description" data-hid="og:description"
+        content="A lightweight, open-source, privacy-focused file sharing tool.">
     <meta name="og:type" data-hid="og:type" content="website">
     <meta data-hid="theme-color" name="theme-color" content="#57F287">
     <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
     <title>Shadownloader</title>
-    
+
     <link href="assets/bootstrap.min.css" rel="stylesheet">
     <link href="assets/material-icons-round.css" rel="stylesheet">
-    
+
     <style>
         html,
         body {
@@ -75,7 +77,7 @@
         .footer a:hover {
             text-decoration: underline;
         }
-        
+
         @keyframes fadeIn {
             from {
                 opacity: 0;
@@ -94,7 +96,8 @@
     <main>
         <div class="container-main text-center">
             <div id="title-container" class="d-flex align-items-center justify-content-center">
-                <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle" loading="lazy" style="display:block;">
+                <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle"
+                    loading="lazy" style="display:block;">
                 <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Shadownloader</h1>
             </div>
             <p class="lead mb-4">A lightweight, open-source, privacy-focused file sharing tool.</p>
@@ -114,15 +117,17 @@
 
             <div id="help-statement" class="text-body-secondary mt-4">
                 <strong>What do I do now?</strong><br>
-                <p>Ensure that the file link is correct and try again. Otherwise, ask the person who shared the file with you for assistance.</p>
+                <p>Ensure that the file link is correct and try again. Otherwise, ask the person who shared the file
+                    with you for assistance.</p>
             </div>
         </div>
     </main>
 
     <footer class="footer">
         <div class="container text-center">
-             Shadownloader Server <span id="server-version"></span> | 
-             <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+            Shadownloader Server <span id="server-version"></span> |
+            <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on
+                GitHub</a>
         </div>
     </footer>
 
@@ -137,7 +142,7 @@
             mql.addEventListener?.("change", apply);
         })();
 
-        fetch('/')
+        fetch('/api/info')
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');
                 return response.json();
@@ -153,4 +158,5 @@
             });
     </script>
 </body>
+
 </html>

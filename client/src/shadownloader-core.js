@@ -351,6 +351,12 @@ export class ShadownloaderClient {
    * Throws ShadownloaderValidationError on failure.
    */
   validateUploadInputs({ file, lifetimeMs, encrypt, serverInfo }) {
+    const caps = serverInfo?.capabilities?.upload;
+    if (!caps || !caps.enabled) {
+      // The server does not support uploads.
+      throw new ShadownloaderValidationError('Server does not support file uploads.');
+    }
+
     if (!(file instanceof File) && !(file instanceof Blob)) {
       throw new ShadownloaderValidationError('File is missing or invalid.');
     }
@@ -359,12 +365,6 @@ export class ShadownloaderClient {
     const fileSize = Number(file.size || 0);
     if (!Number.isFinite(fileSize) || fileSize <= 0) {
       throw new ShadownloaderValidationError('Cannot upload empty (0 byte) files.');
-    }
-
-    const caps = serverInfo?.capabilities?.upload;
-    if (!caps) {
-      // The server does not support uploads.
-      throw new ShadownloaderValidationError('Server does not support file uploads.');
     }
 
     // maxSizeMB: 0 means unlimited
