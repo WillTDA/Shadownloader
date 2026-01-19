@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A lightweight, open-source, privacy-focused file sharing tool.">
+  <meta name="og:site_name" content="Shadownloader | Privacy-first File Sharing">
+  <meta name="og:title" content="Shadownloader">
+  <meta name="og:description" content="A lightweight, open-source, privacy-focused file sharing tool.">
+  <meta name="og:type" content="website">
+  <meta name="theme-color" content="#57F287">
+  <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+  <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
+  <title>Shadownloader Direct Transfer</title>
+
+  <link href="/assets/bootstrap.min.css" rel="stylesheet">
+  <link href="/assets/material-icons-round.css" rel="stylesheet">
+  <link rel="stylesheet" href="/css/bootstrap-base.css" />
+  <link rel="stylesheet" href="/css/download-p2p.css" />
+
+  <script src="/assets/streamsaver.min.js"></script>
+  <script src="/js/theme.js" defer></script>
+  <script src="/js/page-common.js" defer></script>
+  <script src="/vendor/peerjs.min.js" defer></script>
+  <script src="/js/download-p2p.js" defer></script>
+</head>
+
+<body data-code="<%= code %>">
+  <main>
+    <div class="container-main text-center">
+      <div id="title-container" class="d-flex align-items-center justify-content-center">
+        <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle" loading="lazy" style="display:block;">
+        <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Shadownloader</h1>
+      </div>
+      <p class="lead mb-4">Direct transfer (peer-to-peer)</p>
+
+      <div id="status-card" class="card shadow-sm">
+        <div class="card-body p-4">
+          <div id="icon-container" class="mb-3 text-primary"><span class="material-icons-round">sync_alt</span></div>
+          <h5 class="card-title mb-2" id="title">Connecting…</h5>
+          <p class="card-text text-body-secondary" id="message">Preparing a secure peer-to-peer connection.</p>
+
+          <div id="meta" class="text-body-secondary small" style="min-height: 1.25rem;"></div>
+
+          <div class="progress mt-3" role="progressbar" style="height: 6px;">
+            <div id="bar" class="progress-bar" style="width: 0%"></div>
+          </div>
+          <div class="progress-info text-body-secondary">
+            <span id="bytes">0 / 0</span>
+          </div>
+
+          <div id="actions" class="mt-3" hidden>
+            <button class="btn btn-secondary" id="retryBtn" type="button">Retry</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-body-secondary mt-4" style="font-size: 0.9rem; opacity: 0.85;">
+        <strong>How does this work?</strong><br>
+        <p class="mb-0">Your browser connects directly to the sender. The server only helps the two peers find each other.</p>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container text-center">
+      <%= serverName %> <span id="serverVersion"></span>
+    </div>
+  </footer>
+</body>
+
+</html>

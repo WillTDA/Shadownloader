@@ -1,0 +1,42 @@
+/* Web UI (Main Menu) — Bootstrap-native look */
+
+.container-main { max-width: 980px; }
+
+.dropzone {
+  border: 2px dashed var(--bs-border-color);
+  border-radius: 1rem;
+  padding: 2.25rem 1.5rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.dropzone:focus {
+  outline: none;
+  box-shadow: 0 0 0 .25rem rgba(var(--bs-primary-rgb), .25);
+}
+
+.dropzone.dragover {
+  border-color: rgba(var(--bs-primary-rgb), 1);
+  background-color: rgba(var(--bs-primary-rgb), .06);
+  transform: translateY(-1px);
+}
+
+.help-btn {
+  width: 28px;
+  height: 28px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.code-box {
+  display: inline-block;
+  padding: .65rem 1rem;
+  border-radius: .75rem;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 1.1rem;
+  letter-spacing: .06em;
+}

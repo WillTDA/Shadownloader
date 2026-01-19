@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en" data-bs-theme="auto">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A lightweight, open-source, privacy-focused file sharing tool." />
+  <meta name="og:site_name" content="Shadownloader | Privacy-first File Sharing" />
+  <meta name="og:title" content="Shadownloader" />
+  <meta name="og:description" content="A lightweight, open-source, privacy-focused file sharing tool." />
+  <meta name="og:type" content="website" />
+  <meta name="theme-color" content="#57F287" />
+
+  <link rel="icon" href="/assets/favicon.ico" type="image/x-icon" />
+  <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon" />
+
+  <title><%= serverName %></title>
+
+  <link href="/assets/bootstrap.min.css" rel="stylesheet" />
+  <link href="/assets/material-icons-round.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/bootstrap-base.css" />
+  <link rel="stylesheet" href="/css/index.css" />
+  <link rel="stylesheet" href="/css/tooltips.css" />
+
+  <script src="/js/theme.js" defer></script>
+  <script src="/js/tooltips.js" defer></script>
+  <script src="/js/page-common.js" defer></script>
+  <script type="module" src="/js/webui-main.js"></script>
+</head>
+
+<body>
+  <main>
+    <div class="container-main">
+      <div id="title-container" class="d-flex align-items-center justify-content-center">
+        <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle" loading="lazy" style="display:block;">
+        <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Shadownloader</h1>
+      </div>
+      <p class="lead text-center mb-4">Send a file securely, or enter a sharing code to receive one.</p>
+
+      <div id="statusAlert" class="alert mt-3" role="status" hidden></div>
+
+      <div id="panels" class="row g-4">
+        <!-- File selection -->
+        <div class="col-lg-6">
+          <div class="card shadow-sm h-100">
+            <div class="card-body p-4">
+              <div id="dropzone" class="dropzone text-center" tabindex="0" role="button" aria-label="Select a file">
+                <h5 class="mb-2">Drag &amp; Drop File Here</h5>
+                <div class="text-body-secondary mb-3">or</div>
+                <button class="btn btn-secondary" id="selectFileBtn" type="button">Select File</button>
+                <input id="fileInput" class="visually-hidden" type="file" />
+
+                <div id="fileChosen" class="mt-3 small text-body-secondary" hidden>
+                  <span class="fw-semibold" id="fileChosenName">file</span>
+                  <span class="mx-1">•</span>
+                  <span id="fileChosenSize">0 MB</span>
+                </div>
+
+                <div class="mt-4 small text-body-secondary" id="maxUploadHint">Loading server limits…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Options -->
+        <div class="col-lg-6">
+          <div class="card shadow-sm h-100">
+            <div class="card-body p-4">
+              <div class="text-center">
+                <h2 class="h4 fw-semibold mb-1">Options</h2>
+                <div class="text-body-secondary">Choose how to upload your data.</div>
+              </div>
+
+              <hr class="my-4" />
+
+              <div class="mb-3" id="optUploadMode">
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="form-label fw-semibold mb-1">Upload Mode</div>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary rounded-circle help-btn"
+                    data-tooltip="Standard uploads to the server. Direct Transfer sends peer-to-peer; you must keep this page open while sending."
+                    aria-label="Upload mode help"
+                  >?</button>
+                </div>
+                <div class="btn-group w-100" role="group" aria-label="Upload mode">
+                  <button class="btn btn-outline-primary active" id="modeStandard" type="button" aria-selected="true">Standard</button>
+                  <button class="btn btn-outline-primary" id="modeP2P" type="button" aria-selected="false">Direct Transfer</button>
+                </div>
+              </div>
+
+              <div id="optLifetime" class="mb-3">
+                <div class="form-label fw-semibold mb-1">File Lifetime</div>
+                <div class="input-group">
+                  <input id="lifetimeValue" class="form-control" type="number" min="0" step="1" value="2" />
+                  <select id="lifetimeUnit" class="form-select" aria-label="Lifetime unit" style="max-width: 9rem;">
+                    <option value="hours">Hours</option>
+                    <option value="days" selected>Days</option>
+                  </select>
+                </div>
+                <div class="form-text" id="lifetimeHelp">Loading…</div>
+              </div>
+
+              <div id="optEncrypt" class="mb-3">
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="form-label fw-semibold mb-1">Enable Encryption?</div>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary rounded-circle help-btn"
+                    data-tooltip="If enabled, the file is encrypted in your browser. The decryption key is only in the URL fragment, so the server never sees it."
+                    aria-label="Encryption help"
+                  >?</button>
+                </div>
+                <div class="btn-group w-100" role="group" aria-label="Encryption">
+                  <button class="btn btn-outline-primary active" id="encYes" type="button" aria-selected="true">Yes</button>
+                  <button class="btn btn-outline-primary" id="encNo" type="button" aria-selected="false">No</button>
+                </div>
+              </div>
+
+              <div id="p2pInfo" class="alert alert-secondary small py-2" hidden>
+                You&#39;ll get a code to share with the recipient.<br />
+                You must keep this page open to complete the transfer.
+              </div>
+
+              <button class="btn btn-primary w-100" id="startBtn" type="button">Start Upload</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress cards -->
+      <div id="progressCard" class="card shadow-sm mt-4" hidden>
+        <div class="card-body p-4 text-center">
+          <div id="progressIcon" class="text-primary mb-2"><span class="material-icons-round">upload</span></div>
+          <h5 class="mb-1" id="progressTitle">Uploading</h5>
+          <div class="text-body-secondary" id="progressSub">Preparing…</div>
+          <div class="progress mt-3" role="progressbar" style="height: 6px;">
+            <div id="progressFill" class="progress-bar" style="width: 0%"></div>
+          </div>
+          <div class="small text-body-secondary mt-2" id="progressBytes">0 / 0</div>
+        </div>
+      </div>
+
+      <div id="p2pWaitCard" class="card shadow-sm mt-4" hidden>
+        <div class="card-body p-4 text-center">
+          <div class="text-primary mb-2"><span class="material-icons-round">wifi_tethering</span></div>
+          <h5 class="mb-2">Awaiting connection…</h5>
+          <div class="text-body-secondary">Provide your recipient with the code below:</div>
+
+          <div class="code-box my-3" id="p2pCode">ABCD-1234</div>
+
+          <div class="small text-body-secondary mb-2">or share this link:</div>
+          <div class="input-group">
+            <input class="form-control" id="p2pLink" readonly value="" />
+            <button class="btn btn-outline-secondary" id="copyP2PLink" type="button" aria-label="Copy link">
+              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">content_copy</span>
+            </button>
+            <button class="btn btn-outline-secondary" id="openP2PLink" type="button" aria-label="Open link">
+              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">open_in_new</span>
+            </button>
+          </div>
+
+          <button class="btn btn-secondary mt-3" id="cancelP2P" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div id="shareCard" class="card shadow-sm mt-4" hidden>
+        <div class="card-body p-4 text-center">
+          <div class="text-success mb-2"><span class="material-icons-round">check_circle</span></div>
+          <h5 class="mb-2">Upload complete</h5>
+          <div class="text-body-secondary">Share this link with your recipient:</div>
+
+          <div class="input-group mt-3">
+            <input class="form-control" id="shareLink" readonly value="" />
+            <button class="btn btn-outline-secondary" id="copyShare" type="button" aria-label="Copy link">
+              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">content_copy</span>
+            </button>
+            <button class="btn btn-outline-secondary" id="openShare" type="button" aria-label="Open link">
+              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">open_in_new</span>
+            </button>
+          </div>
+
+          <button class="btn btn-secondary mt-3" id="newUpload" type="button">Send another file</button>
+        </div>
+      </div>
+
+      <!-- Code entry -->
+      <div class="card shadow-sm mt-4">
+        <div class="card-body p-4">
+          <div class="text-center">
+            <h2 class="h5 fw-semibold mb-3">Enter Sharing Code</h2>
+          </div>
+          <div class="input-group">
+            <input id="codeInput" class="form-control" type="text" placeholder="ABCD-1234 or file id" />
+            <button id="codeGo" class="btn btn-primary" type="button" aria-label="Go">
+              <span class="material-icons-round" style="font-size: 20px; vertical-align: -5px;">arrow_forward</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container text-center">
+      <%= serverName %> <span id="serverVersion"></span> |
+      <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+    </div>
+  </footer>
+</body>
+
+</html>

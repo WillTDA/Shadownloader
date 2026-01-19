@@ -1,0 +1,47 @@
+/* Small overrides for the P2P download page */
+.p2p-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 0 40px;
+}
+
+.p2p-card {
+  width: min(860px, 100%);
+}
+
+.p2p-title {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.p2p-sub {
+  text-align: center;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.p2p-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+  color: var(--muted);
+}
+
+.p2p-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.p2p-note {
+  text-align: center;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 14px;
+}

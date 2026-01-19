@@ -14,10 +14,12 @@ const { version } = require('./package.json');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const http = require('http');
 const express = require('express');
 const rateLimit = require('express-rate-limit').default;
 const helmet = require('helmet').default;
 const cors = require('cors');
+const { ExpressPeerServer } = require('peer');
 const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
@@ -32,6 +34,46 @@ log('info', `Web UI Enabled: ${enableWebUI}`);
 log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
 log('info', `Upload Protocol Enabled: ${enableUpload}`);
 
+// ===== P2P (WebRTC) configuration exposed to clients via /api/info =====
+// PeerServer mount path is fixed: /peerjs (no environment variable by design).
+const PEERJS_MOUNT_PATH = '/peerjs';
+
+const parseList = (raw) => {
+    if (!raw) return [];
+    return String(raw)
+        .split(/[\s,]+/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
+};
+
+// Default: public STUN (Cloudflare) so P2P works out of the box.
+const p2pStunUrls = process.env.P2P_STUN_SERVERS
+    ? parseList(process.env.P2P_STUN_SERVERS)
+    : ['stun:stun.cloudflare.com:3478'];
+
+// TURN is intentionally opt-in.
+const p2pTurnEnabled = process.env.P2P_TURN_ENABLED === 'true';
+const p2pTurnUrls = p2pTurnEnabled ? parseList(process.env.P2P_TURN_URLS) : [];
+const p2pTurnUsername = p2pTurnEnabled ? (process.env.P2P_TURN_USERNAME || '') : '';
+const p2pTurnCredential = p2pTurnEnabled ? (process.env.P2P_TURN_CREDENTIAL || '') : '';
+
+const p2pIceServers = [];
+if (p2pStunUrls.length) p2pIceServers.push({ urls: p2pStunUrls });
+if (p2pTurnEnabled) {
+    if (!p2pTurnUrls.length) {
+        log('warn', 'P2P_TURN_ENABLED is true but P2P_TURN_URLS is empty. TURN will not be used.');
+    } else if (!p2pTurnUsername || !p2pTurnCredential) {
+        log('warn', 'P2P_TURN_ENABLED is true but TURN credentials are missing (P2P_TURN_USERNAME / P2P_TURN_CREDENTIAL).');
+    }
+    if (p2pTurnUrls.length) {
+        p2pIceServers.push({
+            urls: p2pTurnUrls,
+            username: p2pTurnUsername,
+            credential: p2pTurnCredential,
+        });
+    }
+}
+
 const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE !== 'false';
 log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
 
@@ -42,6 +84,9 @@ if (enableUpload && uploadEnableE2EE) {
 
 const app = express();
 const port = 52443;
+// We create the HTTP server manually so we can attach a PeerServer
+// to the same port/path (fixed mount: /peerjs).
+const server = http.createServer(app);
 
 const uploadDir = path.join(__dirname, 'uploads');
 const tmpDir = path.join(__dirname, 'uploads', 'tmp');
@@ -160,10 +205,14 @@ if (enableUpload) {
 log('info', 'Configuring server endpoints and middleware...');
 
 app.set('trust proxy', 1); // Trust the first hop from a reverse proxy
-app.use(cors());
-app.use(express.static('public'));
-app.use(express.json());
 app.disable('x-powered-by');
+
+// Templating
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+app.use(cors());
+app.use(express.json());
 app.use((req, res, next) => {
     res.locals.nonce = crypto.randomBytes(16).toString('base64');
     next();
@@ -179,11 +228,31 @@ app.use(
                 ...helmet.contentSecurityPolicy.getDefaultDirectives(),
                 'upgrade-insecure-requests': null, // This should also be managed by the proxy
                 'script-src': ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
+                'style-src': ["'self'", "'unsafe-inline'"],
+                'connect-src': ["'self'", 'ws:', 'wss:'],
                 'frame-src': ["'self'", 'https://jimmywarting.github.io'], // For streamSaver
+                'worker-src': ["'self'", 'blob:'],
+                'child-src': ["'self'", 'blob:', 'https://jimmywarting.github.io'],
             },
         },
     })
 );
+
+// Static assets (after Helmet so headers apply)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Optional: self-host the PeerJS client if installed.
+// We keep the browser path stable so the Web UI can lazy-load it.
+app.get('/vendor/peerjs.min.js', (req, res) => {
+    try {
+        const p = path.join(__dirname, 'node_modules', 'peerjs', 'dist', 'peerjs.min.js');
+        if (!fs.existsSync(p)) return res.status(404).end();
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        res.sendFile(p);
+    } catch {
+        res.status(404).end();
+    }
+});
 
 
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;
@@ -498,12 +567,12 @@ if (enableUpload) {
 }
 
 apiRouter.get('/info', limiter, (req, res) => {
-    const uploadCapabilities = { enabled: enableUpload };
-    if (enableUpload) {
-        uploadCapabilities.maxSizeMB = maxFileSizeMB;
-        uploadCapabilities.maxLifetimeHours = maxFileLifetimeHours;
-        uploadCapabilities.e2ee = uploadEnableE2EE;
-    }
+    const uploadCapabilities = {
+        enabled: enableUpload,
+        maxSizeMB: enableUpload ? maxFileSizeMB : undefined,
+        maxLifetimeHours: enableUpload ? maxFileLifetimeHours : undefined,
+        e2ee: enableUpload ? uploadEnableE2EE : undefined,
+    };
 
     res.status(200).json({
         name: serverName,
@@ -511,7 +580,10 @@ apiRouter.get('/info', limiter, (req, res) => {
         capabilities: {
             upload: uploadCapabilities,
             p2p: {
-                enabled: enableP2P
+                enabled: enableP2P,
+                peerjsPath: PEERJS_MOUNT_PATH,
+                iceServers: p2pIceServers,
+                turnEnabled: p2pTurnEnabled,
             },
             webUI: {
                 enabled: enableWebUI
@@ -521,48 +593,60 @@ apiRouter.get('/info', limiter, (req, res) => {
 });
 
 app.use('/api', apiRouter);
+
+// ===== PeerJS signalling server (PeerServer) =====
+// Mounted at a fixed path: /peerjs
+if (enableP2P) {
+    const peerServer = ExpressPeerServer(server, {
+        path: '/',
+        debug: process.env.PEERJS_DEBUG === 'true',
+        proxied: true,
+    });
+    app.use(PEERJS_MOUNT_PATH, peerServer);
+    log('info', `PeerServer mounted at ${PEERJS_MOUNT_PATH}`);
+}
+
+// P2P receiver page
+app.get('/p2p/:code', limiter, (req, res) => {
+    if (!enableP2P) return res.status(404).render('pages/404', { serverName });
+    return res.status(200).render('pages/download-p2p', { code: req.params.code, serverName });
+});
+
+// Web UI landing page
+app.get('/', limiter, (req, res) => {
+    if (!enableWebUI) return res.status(200).send('Shadownloader Server is running. Web UI is disabled.');
+    return res.status(200).render('pages/index', { serverName });
+});
+
+// Standard download page
 if (enableUpload) {
     app.use('/upload', uploadRouter);
 
-    app.get('/:fileId', limiter, (req, res) => {
-        const sendHTML = (htmlFilePath, status) => {
-            const nonce = res.locals.nonce;
-            return fs.readFile(htmlFilePath, 'utf8', (err, data) => {
-                if (err) {
-                    log('error', `Failed to read ${path.basename(htmlFilePath)}: ${err.message}`);
-                    return res.status(500).send('Server error');
-                }
-                const modifiedHtml = data.replace(/%%NONCE%%/g, nonce);
-                res.status(status).setHeader('Content-Type', 'text/html').send(modifiedHtml);
-            });
-        };
-
+    app.get(`/:fileId`, limiter, (req, res) => {
         const fileId = req.params.fileId;
         const fileInfo = fileDatabase.get(fileId);
 
-        if (!fileInfo) return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+        if (!fileInfo) return res.status(404).render('pages/404', { serverName });
 
         if (fileInfo.isEncrypted) {
             if (!uploadEnableE2EE) {
                 log('warn', 'Blocked access to an encrypted file because upload E2EE is disabled.');
-                return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+                return res.status(404).render('pages/404', { serverName });
             }
 
             // The Web Crypto API requires a secure context (HTTPS).
-            // If we are behind a reverse proxy, check if the original request was secure.
             if (req.protocol !== 'https') {
                 log('warn', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
-                return sendHTML(path.join(__dirname, 'public', 'insecure.html'), 400);
+                return res.status(400).render('pages/insecure', { serverName });
             }
         }
 
-        return sendHTML(path.join(__dirname, 'public', 'download.html'), 200);
+        return res.status(200).render('pages/download-standard', { serverName, fileId });
     });
 }
 
-app.get('/', limiter, (req, res) => {
-    res.send("Shadownloader Server is running.");
-});
+// 404 fallback
+app.use((_req, res) => res.status(404).render('pages/404', { serverName }));
 
 if (enableUpload) {
     const cleanupExpiredFiles = () => {
@@ -610,7 +694,7 @@ if (enableUpload) {
     }
 }
 
-app.listen(port, () => {
+server.listen(port, () => {
     log('info', `Shadownloader Server v${version} is running. | Port: ${port}`);
 });
 
@@ -622,7 +706,13 @@ const handleShutdown = () => {
         cleanupDir(uploadDir);
         log('info', 'Cleanup complete.');
     }
-    process.exit(0);
+    // Gracefully stop accepting new connections.
+    try {
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 1500).unref();
+    } catch {
+        process.exit(0);
+    }
 };
 
 process.on('SIGINT', handleShutdown);

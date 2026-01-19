@@ -29,6 +29,9 @@
     "express-rate-limit": "^8.2.1",
     "file-system-db": "^2.1.0",
     "helmet": "^8.1.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "ejs": "^3.1.10",
+    "peer": "^1.0.2",
+    "peerjs": "^1.5.5"
   }
 }

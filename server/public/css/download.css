@@ -1,0 +1,23 @@
+#icon-container .material-icons-round { font-size: 3rem; }
+
+.file-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
+}
+
+.file-value { font-weight: 600; }
+
+#trust-statement,
+#encryption-statement {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+#download-button { margin-top: 1.25rem; }
+
+.progress-info {
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
