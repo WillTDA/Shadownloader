@@ -208,10 +208,7 @@ export async function startP2PSend({
 
   let stopped = false;
   let activeConn = null;
-  let readyResolve = null;
-  let ackResolve = null;
-  let readyPromise = null;
-  let ackPromise = null;
+  let transferActive = false;
 
   const stop = () => {
     stopped = true;
@@ -221,13 +218,20 @@ export async function startP2PSend({
 
   peer.on('connection', (conn) => {
     if (stopped) return;
+    if (activeConn) {
+      try { conn.send({ t: 'error', message: 'Another receiver is already connected.' }); } catch {}
+      try { conn.close(); } catch {}
+      return;
+    }
     activeConn = conn;
     onStatus?.({ phase: 'connected', message: 'Connected. Starting transfer…' });
 
-    readyPromise = new Promise((resolve) => {
+    let readyResolve = null;
+    let ackResolve = null;
+    const readyPromise = new Promise((resolve) => {
       readyResolve = resolve;
     });
-    ackPromise = new Promise((resolve) => {
+    const ackPromise = new Promise((resolve) => {
       ackResolve = resolve;
     });
 
@@ -250,6 +254,7 @@ export async function startP2PSend({
 
     conn.on('open', async () => {
       try {
+        transferActive = true;
         conn.send({ t: 'meta', name: file.name, size: file.size, mime: file.type || 'application/octet-stream' });
 
         let sent = 0;
@@ -303,6 +308,7 @@ export async function startP2PSend({
           });
         }
         onComplete?.();
+        stop();
       } catch (err) {
         onError?.(err);
         stop();
@@ -311,6 +317,13 @@ export async function startP2PSend({
 
     conn.on('error', (err) => {
       onError?.(err);
+      stop();
+    });
+
+    conn.on('close', () => {
+      if (transferActive) {
+        onError?.(new ShadownloaderNetworkError('Receiver disconnected before transfer completed.'));
+      }
       stop();
     });
   });
