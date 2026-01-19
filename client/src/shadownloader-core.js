@@ -306,8 +306,11 @@ export async function startP2PSend({
 
         conn.send({ t: 'end' });
 
+        const ackTimeoutMs = Number.isFinite(endAckTimeoutMs)
+          ? Math.max(endAckTimeoutMs, Math.ceil(file.size / (1024 * 1024)) * 1000)
+          : null;
         const ackResult = ackPromise
-          ? await Promise.race([ackPromise, sleep(endAckTimeoutMs).catch(() => null)])
+          ? await Promise.race([ackPromise, sleep(ackTimeoutMs).catch(() => null)])
           : null;
         if (!ackResult || typeof ackResult !== 'object') {
           throw new ShadownloaderNetworkError('Receiver did not confirm completion.');
