@@ -438,17 +438,23 @@ export async function startP2PReceive({
         else if (data instanceof Blob) buf = new Uint8Array(await data.arrayBuffer());
         else return;
 
-        writeQueue = writeQueue.then(async () => {
-          await writer.write(buf);
-          received += buf.byteLength;
-          const percent = total ? Math.min(100, (received / total) * 100) : 0;
-          onProgress?.({ received, total, percent });
-          const now = Date.now();
-          if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
-            lastProgressSentAt = now;
-            try { conn.send({ t: 'progress', received, total }); } catch {}
-          }
-        });
+        writeQueue = writeQueue
+          .then(async () => {
+            await writer.write(buf);
+            received += buf.byteLength;
+            const percent = total ? Math.min(100, (received / total) * 100) : 0;
+            onProgress?.({ received, total, percent });
+            const now = Date.now();
+            if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
+              lastProgressSentAt = now;
+              try { conn.send({ t: 'progress', received, total }); } catch {}
+            }
+          })
+          .catch((err) => {
+            try { conn.send({ t: 'error', message: err?.message || 'Receiver write failed.' }); } catch {}
+            onError?.(err);
+            stop();
+          });
       } catch (err) {
         onError?.(err);
         stop();
