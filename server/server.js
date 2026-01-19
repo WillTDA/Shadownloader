@@ -1,8 +1,3 @@
-process.env.ENABLE_P2P = 'false'
-process.env.ENABLE_UPLOAD = 'true';
-process.env.UPLOAD_MAX_FILE_SIZE_MB = 10000000;
-process.env.UPLOAD_ENABLE_E2EE = 'false';
-
 const log = (level, message) => {
     const lvl = String(level || '').toLowerCase();
     const prefix = `[${new Date().toISOString()}] [${String(level).toUpperCase()}]`;
