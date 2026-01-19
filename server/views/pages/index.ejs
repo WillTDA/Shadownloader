@@ -24,7 +24,7 @@
 
   <script src="/js/theme.js" defer></script>
   <script src="/js/tooltips.js" defer></script>
-  <script src="/js/page-common.js" defer></script>
+  <script type="module" src="/js/page-common.js"></script>
   <script type="module" src="/js/webui-main.js"></script>
 </head>
 
@@ -92,10 +92,12 @@
               <div id="optLifetime" class="mb-3">
                 <div class="form-label fw-semibold mb-1">File Lifetime</div>
                 <div class="input-group">
-                  <input id="lifetimeValue" class="form-control" type="number" min="0" step="1" value="2" />
+                  <input id="lifetimeValue" class="form-control" type="number" min="0" step="0.5" value="24" />
                   <select id="lifetimeUnit" class="form-select" aria-label="Lifetime unit" style="max-width: 9rem;">
-                    <option value="hours">Hours</option>
-                    <option value="days" selected>Days</option>
+                    <option value="minutes">Minutes</option>
+                    <option value="hours" selected>Hours</option>
+                    <option value="days">Days</option>
+                    <option value="unlimited">Unlimited</option>
                   </select>
                 </div>
                 <div class="form-text" id="lifetimeHelp">Loading…</div>

@@ -92,6 +92,269 @@ export function base64ToBytes(b64) {
   return out;
 }
 
+export function isLocalhostHostname(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+export function isSecureContextForP2P(locationObj = globalThis.location, secureContext = globalThis.isSecureContext) {
+  const host = locationObj?.hostname || '';
+  return Boolean(secureContext) || isLocalhostHostname(host);
+}
+
+export function shouldUseSecurePeerJs(locationObj = globalThis.location) {
+  return locationObj?.protocol === 'https:';
+}
+
+export function generateP2PCode() {
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let a = '';
+  for (let i = 0; i < 4; i++) a += letters[Math.floor(Math.random() * letters.length)];
+  let b = '';
+  for (let i = 0; i < 4; i++) b += Math.floor(Math.random() * 10);
+  return `${a}-${b}`;
+}
+
+export function isP2PCodeLike(code) {
+  return /^[A-Z]{4}-\d{4}$/.test(String(code || '').trim());
+}
+
+export async function ensurePeerJsLoaded({ src = '/vendor/peerjs.min.js', documentObj = globalThis.document } = {}) {
+  if (globalThis.Peer) return;
+  if (!documentObj?.createElement) {
+    throw new ShadownloaderValidationError('PeerJS cannot be loaded (document is unavailable).');
+  }
+  await new Promise((resolve, reject) => {
+    const s = documentObj.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new ShadownloaderNetworkError('Could not load PeerJS client.'));
+    documentObj.head.appendChild(s);
+  });
+  if (!globalThis.Peer) throw new ShadownloaderNetworkError('PeerJS client did not initialise.');
+}
+
+function buildPeerOptions({ peerjsPath = '/peerjs', iceServers = [], locationObj = globalThis.location } = {}) {
+  const opts = {
+    host: locationObj?.hostname,
+    path: peerjsPath,
+    secure: shouldUseSecurePeerJs(locationObj),
+    config: { iceServers },
+    debug: 0,
+  };
+  if (locationObj?.port) opts.port = Number(locationObj.port);
+  return opts;
+}
+
+async function createPeerWithRetries({ code, codeGenerator, maxAttempts, buildPeer, onCode }) {
+  let nextCode = code || codeGenerator();
+  let peer = null;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    onCode?.(nextCode, attempt);
+    try {
+      peer = await new Promise((resolve, reject) => {
+        const instance = buildPeer(nextCode);
+        instance.on('open', () => resolve(instance));
+        instance.on('error', (err) => {
+          try { instance.destroy(); } catch {}
+          reject(err);
+        });
+      });
+      return { peer, code: nextCode };
+    } catch (err) {
+      lastError = err;
+      nextCode = codeGenerator();
+    }
+  }
+
+  throw lastError || new ShadownloaderNetworkError('Could not establish PeerJS connection.');
+}
+
+export async function startP2PSend({
+  file,
+  peerjsPath = '/peerjs',
+  iceServers = [],
+  locationObj = globalThis.location,
+  peerjsScriptSrc = '/vendor/peerjs.min.js',
+  codeGenerator = generateP2PCode,
+  maxAttempts = 4,
+  chunkSize = 256 * 1024,
+  onCode,
+  onStatus,
+  onProgress,
+  onComplete,
+  onError,
+} = {}) {
+  if (!file) throw new ShadownloaderValidationError('File is missing.');
+  await ensurePeerJsLoaded({ src: peerjsScriptSrc });
+
+  const peerOpts = buildPeerOptions({ peerjsPath, iceServers, locationObj });
+  const buildPeer = (id) => new globalThis.Peer(id, peerOpts);
+
+  const { peer, code } = await createPeerWithRetries({
+    code: null,
+    codeGenerator,
+    maxAttempts,
+    buildPeer,
+    onCode,
+  });
+
+  let stopped = false;
+  let activeConn = null;
+
+  const stop = () => {
+    stopped = true;
+    try { activeConn?.close(); } catch {}
+    try { peer.destroy(); } catch {}
+  };
+
+  peer.on('connection', (conn) => {
+    if (stopped) return;
+    activeConn = conn;
+    onStatus?.({ phase: 'connected', message: 'Connected. Starting transfer…' });
+
+    conn.on('open', async () => {
+      try {
+        conn.send({ t: 'meta', name: file.name, size: file.size, mime: file.type || 'application/octet-stream' });
+
+        let sent = 0;
+        const total = file.size;
+
+        for (let offset = 0; offset < total; offset += chunkSize) {
+          const slice = file.slice(offset, offset + chunkSize);
+          const buf = await slice.arrayBuffer();
+          conn.send(buf);
+          sent += buf.byteLength;
+
+          const dc = conn?._dc;
+          while (dc && dc.bufferedAmount > 8 * 1024 * 1024) {
+            await new Promise((resolve) => setTimeout(resolve, 40));
+          }
+
+          const percent = total ? (sent / total) * 100 : 0;
+          onProgress?.({ sent, total, percent });
+        }
+
+        conn.send({ t: 'end' });
+        onProgress?.({ sent: file.size, total: file.size, percent: 100 });
+        onComplete?.();
+      } catch (err) {
+        onError?.(err);
+        stop();
+      }
+    });
+
+    conn.on('error', (err) => {
+      onError?.(err);
+      stop();
+    });
+  });
+
+  return { peer, code, stop };
+}
+
+export async function startP2PReceive({
+  code,
+  peerjsPath = '/peerjs',
+  iceServers = [],
+  locationObj = globalThis.location,
+  peerjsScriptSrc = '/vendor/peerjs.min.js',
+  streamSaverObj = globalThis.streamSaver,
+  onStatus,
+  onMeta,
+  onProgress,
+  onComplete,
+  onError,
+  onDisconnect,
+} = {}) {
+  if (!code) throw new ShadownloaderValidationError('No sharing code was provided.');
+  await ensurePeerJsLoaded({ src: peerjsScriptSrc });
+
+  const peerOpts = buildPeerOptions({ peerjsPath, iceServers, locationObj });
+  const peer = new globalThis.Peer(undefined, peerOpts);
+
+  let writer = null;
+  let total = 0;
+  let received = 0;
+
+  const stop = () => {
+    try { writer?.abort(); } catch {}
+    try { peer.destroy(); } catch {}
+  };
+
+  peer.on('error', (err) => {
+    onError?.(err);
+    stop();
+  });
+
+  peer.on('open', () => {
+    const conn = peer.connect(code, { reliable: true });
+
+    conn.on('open', () => {
+      onStatus?.({ phase: 'connected', message: 'Waiting for file details…' });
+      try { conn.send({ t: 'ready' }); } catch {}
+    });
+
+    conn.on('data', async (data) => {
+      try {
+        if (data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data) && data.t) {
+          if (data.t === 'meta') {
+            const name = String(data.name || 'file');
+            total = Number(data.size) || 0;
+            received = 0;
+            onMeta?.({ name, total });
+
+            if (!streamSaverObj?.createWriteStream) {
+              throw new ShadownloaderValidationError('Streaming is unavailable in this browser.');
+            }
+            const stream = streamSaverObj.createWriteStream(name, total ? { size: total } : undefined);
+            writer = stream.getWriter();
+            onProgress?.({ received, total, percent: 0 });
+            return;
+          }
+
+          if (data.t === 'end') {
+            if (writer) await writer.close();
+            onComplete?.({ received, total });
+            return;
+          }
+
+          if (data.t === 'error') {
+            throw new ShadownloaderNetworkError(data.message || 'Sender reported an error.');
+          }
+          return;
+        }
+
+        if (!writer) return;
+
+        let buf;
+        if (data instanceof ArrayBuffer) buf = new Uint8Array(data);
+        else if (ArrayBuffer.isView(data)) buf = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        else return;
+
+        await writer.write(buf);
+        received += buf.byteLength;
+        const percent = total ? Math.min(100, (received / total) * 100) : 0;
+        onProgress?.({ received, total, percent });
+      } catch (err) {
+        onError?.(err);
+        stop();
+      }
+    });
+
+    conn.on('close', () => {
+      if (received > 0 && total > 0 && received < total) {
+        onDisconnect?.();
+      }
+    });
+  });
+
+  return { peer, stop };
+}
+
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason || new DOMException('Aborted', 'AbortError'));
@@ -224,7 +487,6 @@ export class ShadownloaderClient {
     this.logger = opts.logger || null;
 
     if (!this.fetchFn) throw new ShadownloaderValidationError('No fetch() implementation found.');
-    if (!this.cryptoObj?.subtle) throw new ShadownloaderValidationError('Web Crypto API not available (crypto.subtle).');
   }
 
   log(level, message, meta) {
@@ -308,6 +570,34 @@ export class ShadownloaderClient {
     } catch (err) {
       throw new ShadownloaderNetworkError('Could not reach server /api/info.', { cause: err });
     }
+  }
+
+  /**
+   * Resolve a user-entered sharing code via the server.
+   * @returns {Promise<{valid:boolean, type?:string, target?:string, reason?:string}>}
+   */
+  async resolveShareTarget(serverUrl, value, opts = {}) {
+    const {
+      timeoutMs = 5000,
+      signal,
+    } = opts;
+
+    const cleanUrl = await this.cleanServerUrl(serverUrl, { probeHttps: false });
+
+    const { res, json } = await fetchJson(this.fetchFn, `${cleanUrl}/api/resolve`, {
+      method: 'POST',
+      timeoutMs,
+      signal,
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+
+    if (!res.ok) {
+      const msg = json?.error || `Share lookup failed (status ${res.status}).`;
+      throw new ShadownloaderProtocolError(msg, { details: json });
+    }
+
+    return json || { valid: false, reason: 'Unknown response.' };
   }
 
   /**
@@ -453,6 +743,10 @@ export class ShadownloaderClient {
         // ignore UI callback failures
       }
     };
+
+    if (!this.cryptoObj?.subtle) {
+      throw new ShadownloaderValidationError('Web Crypto API not available (crypto.subtle).');
+    }
 
     // 0) get server info + compat
     progress({ phase: 'server-info', text: 'Checking server...' });

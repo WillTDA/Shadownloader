@@ -82,6 +82,10 @@ if (enableUpload && uploadEnableE2EE) {
     log('warn', 'Failure to provide a secure context will cause client-side decryption to fail in the browser.');
 }
 
+if (enableP2P) {
+    log('warn', 'P2P direct transfer requires a secure HTTPS context in browsers (localhost is the only exception).');
+}
+
 const app = express();
 const port = 52443;
 // We create the HTTP server manually so we can attach a PeerServer
@@ -590,6 +594,74 @@ apiRouter.get('/info', limiter, (req, res) => {
             }
         }
     });
+});
+
+apiRouter.post('/resolve', limiter, (req, res) => {
+    const raw = String(req.body?.value || '').trim();
+    if (!raw) {
+        return res.status(400).json({ valid: false, error: 'Missing sharing code.' });
+    }
+
+    const isUrl = /^https?:\/\//i.test(raw);
+    const isUuid = (value) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
+    const isP2PCode = (value) => /^[A-Z]{4}-\d{4}$/.test(value);
+    const normalizeP2P = (value) => value.replace(/\s+/g, '').toUpperCase();
+
+    if (isUrl) {
+        try {
+            const url = new URL(raw);
+            const origin = `${req.protocol}://${req.get('host')}`;
+            if (url.origin !== origin) {
+                return res.status(200).json({ valid: true, type: 'external', target: url.toString() });
+            }
+
+            const path = decodeURIComponent(url.pathname || '');
+            if (path.startsWith('/p2p/')) {
+                const code = normalizeP2P(path.replace('/p2p/', ''));
+                if (!enableP2P) {
+                    return res.status(200).json({ valid: false, reason: 'Direct transfer is disabled on this server.' });
+                }
+                if (!isP2PCode(code)) {
+                    return res.status(200).json({ valid: false, reason: 'Invalid direct transfer code.' });
+                }
+                return res.status(200).json({ valid: true, type: 'p2p', target: `/p2p/${encodeURIComponent(code)}` });
+            }
+
+            if (path.startsWith('/')) {
+                const fileId = path.slice(1);
+                if (isUuid(fileId)) {
+                    const fileInfo = fileDatabase.get(fileId);
+                    if (!fileInfo) {
+                        return res.status(200).json({ valid: false, reason: 'File not found.' });
+                    }
+                    return res.status(200).json({ valid: true, type: 'file', target: `/${fileId}` });
+                }
+            }
+
+            return res.status(200).json({ valid: false, reason: 'Unrecognised sharing link.' });
+        } catch {
+            return res.status(200).json({ valid: false, reason: 'Invalid URL.' });
+        }
+    }
+
+    const compact = raw.replace(/\s+/g, '');
+    if (isUuid(compact)) {
+        const fileInfo = fileDatabase.get(compact);
+        if (!fileInfo) {
+            return res.status(200).json({ valid: false, reason: 'File not found.' });
+        }
+        return res.status(200).json({ valid: true, type: 'file', target: `/${compact}` });
+    }
+
+    const p2pCode = normalizeP2P(compact);
+    if (isP2PCode(p2pCode)) {
+        if (!enableP2P) {
+            return res.status(200).json({ valid: false, reason: 'Direct transfer is disabled on this server.' });
+        }
+        return res.status(200).json({ valid: true, type: 'p2p', target: `/p2p/${encodeURIComponent(p2pCode)}` });
+    }
+
+    return res.status(200).json({ valid: false, reason: 'Unrecognised sharing code.' });
 });
 
 app.use('/api', apiRouter);

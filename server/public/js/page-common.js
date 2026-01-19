@@ -1,9 +1,10 @@
+import { ShadownloaderClient } from './shadownloader-core.js';
+
 (async () => {
   try {
-    const res = await fetch('/api/info', { cache: 'no-store' });
-    if (!res.ok) return;
-    const data = await res.json();
-    const v = data?.version ? `v${data.version}` : '';
+    const client = new ShadownloaderClient({ clientVersion: '0.0.0' });
+    const { serverInfo } = await client.getServerInfo(location.origin, { timeoutMs: 5000 });
+    const v = serverInfo?.version ? `v${serverInfo.version}` : '';
 
     const el1 = document.getElementById('serverVersion');
     if (el1) el1.textContent = v;

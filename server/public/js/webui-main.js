@@ -1,4 +1,11 @@
-import { ShadownloaderClient } from './shadownloader-core.js';
+import {
+  DEFAULT_CHUNK_SIZE,
+  ShadownloaderClient,
+  estimateTotalUploadSizeBytes,
+  isSecureContextForP2P,
+  lifetimeToMs,
+  startP2PSend,
+} from './shadownloader-core.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -61,6 +68,7 @@ const els = {
 const state = {
   info: null,
   file: null,
+  fileTooLargeForStandard: false,
   mode: 'standard',
   encrypt: true,
   uploadEnabled: false,
@@ -70,9 +78,11 @@ const state = {
   e2ee: false,
   peerjsPath: '/peerjs',
   iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
-  p2pPeer: null,
-  p2pConn: null,
+  p2pSession: null,
+  p2pSecureOk: true,
 };
+
+const coreClient = new ShadownloaderClient({ clientVersion: '0.0.0' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 B';
@@ -84,15 +94,17 @@ function formatBytes(bytes) {
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
 }
 
-function showToast(text, type = "info", timeoutMs = 2500) {
+function showToast(text, type = 'info', timeoutMs = 4500) {
   const el = els.statusAlert;
   if (!el) { alert(text); return; }
-  el.textContent = String(text || "");
-  el.className = `alert alert-${type} mt-3`;
+  el.textContent = String(text || '');
+  el.className = `alert alert-${type} shadow-sm`;
   el.hidden = false;
   if (timeoutMs > 0) {
     const snap = el.textContent;
-    setTimeout(() => { if (el.textContent === snap) el.hidden = true; }, timeoutMs);
+    setTimeout(() => {
+      if (el.textContent === snap) el.hidden = true;
+    }, timeoutMs);
   }
 }
 
@@ -100,6 +112,17 @@ function setHidden(el, hidden) {
   if (!el) return;
   if (hidden) el.setAttribute('hidden', '');
   else el.removeAttribute('hidden');
+}
+
+function setDisabled(el, disabled) {
+  if (!el) return;
+  if (disabled) {
+    el.setAttribute('disabled', '');
+    el.classList.add('disabled');
+  } else {
+    el.removeAttribute('disabled');
+    el.classList.remove('disabled');
+  }
 }
 
 function setSelected(btnA, btnB, aSelected) {
@@ -121,23 +144,6 @@ function normalizeCode(raw) {
   return compact;
 }
 
-function isUuidLike(s) {
-  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s);
-}
-
-function isP2PCodeLike(s) {
-  return /^[A-Z]{4}-\d{4}$/.test(s);
-}
-
-function generateP2PCode() {
-  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  let a = '';
-  for (let i = 0; i < 4; i++) a += letters[Math.floor(Math.random() * letters.length)];
-  let b = '';
-  for (let i = 0; i < 4; i++) b += Math.floor(Math.random() * 10);
-  return `${a}-${b}`;
-}
-
 function showPanels(which) {
   // which: 'main' | 'progress' | 'p2pwait' | 'share'
   setHidden(els.panels, which !== 'main');
@@ -157,6 +163,47 @@ function updateFileUI() {
   setHidden(els.fileChosen, false);
 }
 
+function isFileTooLargeForStandard(file) {
+  if (!file || !state.uploadEnabled) return false;
+  const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
+    ? state.maxSizeMB * 1024 * 1024
+    : null;
+  if (!maxBytes) return false;
+  const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
+  const estimatedBytes = estimateTotalUploadSizeBytes(file.size, totalChunks, Boolean(state.encrypt));
+  return estimatedBytes > maxBytes;
+}
+
+function updateStartEnabled() {
+  const hasFile = Boolean(state.file);
+  if (state.mode === 'standard') {
+    const lifetimeOk = validateLifetimeInput();
+    const canUpload = state.uploadEnabled && !state.fileTooLargeForStandard && lifetimeOk;
+    setDisabled(els.startBtn, !(hasFile && canUpload));
+  } else {
+    const canP2P = state.p2pEnabled && state.p2pSecureOk;
+    setDisabled(els.startBtn, !(hasFile && canP2P));
+  }
+}
+
+function handleFileSelection(file) {
+  state.file = file || null;
+  updateFileUI();
+
+  state.fileTooLargeForStandard = false;
+  if (state.file && state.mode === 'standard' && isFileTooLargeForStandard(state.file)) {
+    state.fileTooLargeForStandard = true;
+    if (state.p2pEnabled && state.p2pSecureOk) {
+      setMode('p2p');
+      showToast('File exceeds the server upload limit — using direct transfer.');
+    } else {
+      showToast('File exceeds the server upload limit and cannot be uploaded.');
+    }
+  }
+
+  updateStartEnabled();
+}
+
 function setMode(mode) {
   state.mode = mode;
   const isStandard = mode === 'standard';
@@ -173,78 +220,97 @@ function setMode(mode) {
   } else {
     els.startBtn.textContent = 'Start Transfer';
   }
+
+  state.fileTooLargeForStandard = Boolean(state.file && isFileTooLargeForStandard(state.file));
+  if (state.fileTooLargeForStandard && isStandard) {
+    if (state.p2pEnabled && state.p2pSecureOk) {
+      showToast('File exceeds the server upload limit — using direct transfer.');
+      state.fileTooLargeForStandard = false;
+      setMode('p2p');
+      return;
+    }
+    showToast('File exceeds the server upload limit and cannot be uploaded.');
+  }
+
+  updateStartEnabled();
 }
 
 function updateCapabilitiesUI() {
+  state.p2pSecureOk = isSecureContextForP2P();
+
   // Upload
   if (state.uploadEnabled) {
     const maxText = (state.maxSizeMB === 0)
       ? 'Max upload size: unlimited'
       : `Max upload size: ${state.maxSizeMB} MB`;
 
-    els.maxUploadHint.textContent = state.p2pEnabled
+    const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
+    els.maxUploadHint.textContent = p2pAvailable
       ? `${maxText}. Anything over will use direct transfer (P2P).`
       : maxText;
   } else {
-    els.maxUploadHint.textContent = state.p2pEnabled
+    const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
+    els.maxUploadHint.textContent = p2pAvailable
       ? 'Standard uploads are disabled on this server. Direct transfer (P2P) is available.'
       : 'Uploads are disabled on this server.';
   }
 
   // Lifetime
   if (state.uploadEnabled) {
-    if (state.maxLifetimeHours === 0) {
-      els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
-    } else {
-      els.lifetimeHelp.textContent = `Max lifetime: ${state.maxLifetimeHours} hours.`;
-    }
-
-    // Set a sane default
-    const maxH = state.maxLifetimeHours;
-    let defaultUnit = 'days';
-    let defaultValue = 2;
-
-    if (maxH > 0) {
-      const maxDays = maxH / 24;
-      if (maxDays >= 2) {
-        defaultUnit = 'days';
-        defaultValue = 2;
-      } else {
-        defaultUnit = 'hours';
-        defaultValue = Math.max(1, Math.floor(maxH));
+    const unlimitedOption = els.lifetimeUnit?.querySelector('option[value="unlimited"]');
+    if (state.maxLifetimeHours > 0) {
+      if (unlimitedOption) {
+        unlimitedOption.disabled = true;
+        unlimitedOption.textContent = 'Unlimited (Disabled by Server)';
       }
+    } else if (unlimitedOption) {
+      unlimitedOption.disabled = false;
+      unlimitedOption.textContent = 'Unlimited';
     }
-
-    els.lifetimeUnit.value = defaultUnit;
-    els.lifetimeValue.value = String(defaultValue);
   }
 
   // Encryption
-  const canEncrypt = state.uploadEnabled && state.e2ee && (window.isSecureContext || location.hostname === 'localhost');
+  const canEncrypt = state.uploadEnabled && state.e2ee && window.isSecureContext;
   if (!canEncrypt) {
     state.encrypt = false;
     setSelected(els.encYes, els.encNo, false);
+    setDisabled(els.encYes, true);
     els.helpEnc.title = state.uploadEnabled && state.e2ee ? 'Requires HTTPS to use Web Crypto.' : 'Not supported on this server.';
+  } else {
+    setDisabled(els.encYes, false);
   }
 
   // Mode toggle availability
-  if (!state.p2pEnabled) {
-    els.modeP2P?.setAttribute('disabled', '');
-    els.modeP2P?.classList.add('disabled');
-  }
+  const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
+  setDisabled(els.modeP2P, !p2pAvailable);
 
   if (!state.uploadEnabled) {
-    // Force P2P mode if available
-    els.modeStandard?.setAttribute('disabled', '');
-    els.modeStandard?.classList.add('disabled');
-    if (state.p2pEnabled) setMode('p2p');
+    setDisabled(els.modeStandard, true);
+    if (p2pAvailable) setMode('p2p');
+  } else {
+    setDisabled(els.modeStandard, false);
   }
+
+  setDisabled(els.lifetimeValue, !state.uploadEnabled || els.lifetimeUnit.value === 'unlimited');
+  setDisabled(els.lifetimeUnit, !state.uploadEnabled);
+
+  validateLifetimeInput();
+}
+
+function applyLifetimeDefaults() {
+  if (!state.uploadEnabled) return;
+  const maxH = state.maxLifetimeHours;
+  const safeValue = Number.isFinite(maxH) && maxH > 0
+    ? Math.max(0.5, Math.min(24, maxH))
+    : 24;
+  els.lifetimeUnit.value = 'hours';
+  els.lifetimeValue.value = String(safeValue);
+  setDisabled(els.lifetimeValue, els.lifetimeUnit.value === 'unlimited');
+  validateLifetimeInput();
 }
 
 async function loadServerInfo() {
-  const res = await fetch('/api/info', { cache: 'no-store' });
-  if (!res.ok) throw new Error('Could not load /api/info');
-  const info = await res.json();
+  const { serverInfo: info } = await coreClient.getServerInfo(location.origin, { timeoutMs: 5000 });
   state.info = info;
 
   const upload = info?.capabilities?.upload;
@@ -259,24 +325,50 @@ async function loadServerInfo() {
   if (Array.isArray(p2p?.iceServers) && p2p.iceServers.length) state.iceServers = p2p.iceServers;
 
   updateCapabilitiesUI();
+  applyLifetimeDefaults();
+  updateStartEnabled();
 }
 
 function lifetimeMsFromUI() {
-  const n = Number(els.lifetimeValue.value);
   const unit = els.lifetimeUnit.value;
-  if (!Number.isFinite(n) || n < 0) return 0;
-  const v = Math.floor(n);
-  if (v === 0) return 0;
-  if (unit === 'days') return v * 24 * 60 * 60 * 1000;
-  return v * 60 * 60 * 1000;
+  if (unit === 'unlimited') return 0;
+  const value = parseFloat(els.lifetimeValue.value);
+  return lifetimeToMs(value, unit);
 }
 
-function clampLifetimeMs(ms) {
-  if (!state.uploadEnabled) return ms;
+function validateLifetimeInput() {
+  if (!state.uploadEnabled) return true;
   const maxH = state.maxLifetimeHours;
-  if (maxH === 0) return ms;
-  const maxMs = maxH * 60 * 60 * 1000;
-  return Math.min(ms, maxMs);
+  const unit = els.lifetimeUnit.value;
+
+  if (maxH === 0 && unit === 'unlimited') {
+    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
+    els.lifetimeHelp.className = 'form-text text-body-secondary';
+    return true;
+  }
+
+  if (maxH > 0 && unit === 'unlimited') {
+    const maxHours = Math.max(1, Math.floor(maxH));
+    els.lifetimeUnit.value = 'hours';
+    els.lifetimeValue.disabled = false;
+    els.lifetimeValue.value = String(Math.min(24, maxHours));
+  }
+
+  const ms = lifetimeMsFromUI();
+  const maxMs = Number.isFinite(maxH) && maxH > 0 ? maxH * 60 * 60 * 1000 : null;
+  if (maxMs && ms > maxMs) {
+    els.lifetimeHelp.textContent = `File lifetime too long. Server limit: ${maxH} hours.`;
+    els.lifetimeHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  if (maxH === 0) {
+    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
+  } else if (maxH > 0) {
+    els.lifetimeHelp.textContent = `Max lifetime: ${maxH} hours.`;
+  }
+  els.lifetimeHelp.className = 'form-text text-body-secondary';
+  return true;
 }
 
 function showProgress({ title, sub, percent, doneBytes, totalBytes, icon }) {
@@ -297,6 +389,7 @@ function showShare(link) {
 
 function resetToMain() {
   state.file = null;
+  state.fileTooLargeForStandard = false;
   updateFileUI();
   showPanels('main');
   els.shareLink.value = '';
@@ -304,13 +397,12 @@ function resetToMain() {
   els.progressFill.style.width = '0%';
   els.progressBytes.textContent = '0 / 0';
   stopP2P();
+  updateStartEnabled();
 }
 
 function stopP2P() {
-  try { state.p2pConn?.close(); } catch {}
-  try { state.p2pPeer?.destroy(); } catch {}
-  state.p2pConn = null;
-  state.p2pPeer = null;
+  try { state.p2pSession?.stop(); } catch {}
+  state.p2pSession = null;
 }
 
 function copyToClipboard(value) {
@@ -339,20 +431,32 @@ async function startStandardUpload() {
     return;
   }
 
-  // Decide whether to fall back to P2P if too big
-  if (state.p2pEnabled && state.maxSizeMB && state.maxSizeMB > 0) {
-    const maxBytes = state.maxSizeMB * 1024 * 1024;
-    if (file.size > maxBytes) {
-      setMode('p2p');
-      showToast('File exceeds the server upload limit — using direct transfer.');
-      return startP2PSend();
+  const encrypt = Boolean(state.encrypt);
+  const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
+    ? state.maxSizeMB * 1024 * 1024
+    : null;
+  if (maxBytes) {
+    const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
+    const estimatedBytes = estimateTotalUploadSizeBytes(file.size, totalChunks, encrypt);
+    if (estimatedBytes > maxBytes) {
+      if (state.p2pEnabled && state.p2pSecureOk) {
+        setMode('p2p');
+        showToast('File exceeds the server upload limit — using direct transfer.');
+        return startP2PSendFlow();
+      }
+      showToast('File exceeds the server upload limit and cannot be uploaded.');
+      return;
     }
   }
 
-  const client = new ShadownloaderClient({ clientVersion: 'webui' });
+  if (!validateLifetimeInput()) {
+    showToast('File lifetime exceeds server limits.');
+    return;
+  }
 
-  const lifetimeMs = clampLifetimeMs(lifetimeMsFromUI());
-  const encrypt = Boolean(state.encrypt);
+  const client = new ShadownloaderClient({ clientVersion: state.info?.version || '0.0.0' });
+
+  const lifetimeMs = lifetimeMsFromUI();
 
   showProgress({ title: 'Uploading', sub: 'Preparing…', percent: 0, doneBytes: 0, totalBytes: file.size, icon: '⬆' });
 
@@ -362,7 +466,7 @@ async function startStandardUpload() {
       file,
       encrypt,
       lifetimeMs,
-      progress: ({ phase, text, percent }) => {
+      onProgress: ({ phase, text, percent }) => {
         const p = (typeof percent === 'number') ? percent : 0;
         showProgress({
           title: 'Uploading',
@@ -384,21 +488,13 @@ async function startStandardUpload() {
   }
 }
 
-function ensurePeerJsLoaded() {
-  if (window.Peer) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = '/vendor/peerjs.min.js';
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Could not load PeerJS client.')); 
-    document.head.appendChild(s);
-  });
-}
-
-async function startP2PSend() {
+async function startP2PSendFlow() {
   if (!state.p2pEnabled) {
     showToast('Direct transfer is disabled on this server.');
+    return;
+  }
+  if (!state.p2pSecureOk) {
+    showToast('Direct transfer requires HTTPS (or localhost).');
     return;
   }
 
@@ -408,60 +504,37 @@ async function startP2PSend() {
     return;
   }
 
-  await ensurePeerJsLoaded();
-
-  let code = generateP2PCode();
-
-  const buildPeer = (id) => {
-    const isSecure = location.protocol === 'https:' || location.hostname === 'localhost';
-
-    const opts = {
-      host: location.hostname,
-      path: state.peerjsPath,
-      secure: isSecure,
-      config: { iceServers: state.iceServers },
-      debug: 0,
-    };
-
-    // Only set port if explicitly present (helps behind reverse proxies)
-    if (location.port) opts.port = Number(location.port);
-
-    return new window.Peer(id, opts);
-  };
-
-  const openWait = (id) => {
-    showPanels('p2pwait');
-    els.p2pCode.textContent = id;
-    const link = `${location.origin}/p2p/${encodeURIComponent(id)}`;
-    els.p2pLink.value = link;
-  };
-
-  const tryCreate = async () => {
-    return new Promise((resolve, reject) => {
-      const peer = buildPeer(code);
-
-      peer.on('open', () => resolve(peer));
-      peer.on('error', (e) => {
-        try { peer.destroy(); } catch {}
-        reject(e);
-      });
-    });
-  };
-
-  let peer;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    openWait(code);
-    try {
-      peer = await tryCreate();
-      break;
-    } catch (e) {
-      // ID may be in use
-      code = generateP2PCode();
-      if (attempt === 3) throw e;
-    }
-  }
-
-  state.p2pPeer = peer;
+  state.p2pSession = await startP2PSend({
+    file,
+    peerjsPath: state.peerjsPath,
+    iceServers: state.iceServers,
+    onCode: (id) => {
+      showPanels('p2pwait');
+      els.p2pCode.textContent = id;
+      const link = `${location.origin}/p2p/${encodeURIComponent(id)}`;
+      els.p2pLink.value = link;
+    },
+    onStatus: ({ message }) => {
+      showProgress({ title: 'Sending…', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: '⇄' });
+    },
+    onProgress: ({ sent, total, percent }) => {
+      showProgress({ title: 'Sending…', sub: 'Transferring…', percent, doneBytes: sent, totalBytes: total, icon: '⇄' });
+    },
+    onComplete: () => {
+      showProgress({ title: 'Sending…', sub: 'Done!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: '⇄' });
+      setTimeout(() => {
+        stopP2P();
+        resetToMain();
+        showToast('Transfer complete.');
+      }, 800);
+    },
+    onError: (err) => {
+      console.error(err);
+      showToast(err?.message || 'Transfer failed.');
+      stopP2P();
+      resetToMain();
+    },
+  });
 
   els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.'));
   els.openP2PLink.onclick = () => window.open(els.p2pLink.value, '_blank', 'noopener');
@@ -469,62 +542,6 @@ async function startP2PSend() {
     stopP2P();
     resetToMain();
   };
-
-  peer.on('connection', (conn) => {
-    state.p2pConn = conn;
-
-    // Switch to progress view
-    showProgress({ title: 'Sending…', sub: 'Connected. Starting transfer…', percent: 0, doneBytes: 0, totalBytes: file.size, icon: '⇄' });
-
-    conn.on('open', async () => {
-      try {
-        conn.send({ t: 'meta', name: file.name, size: file.size, mime: file.type || 'application/octet-stream' });
-
-        const chunkSize = 256 * 1024;
-        let sent = 0;
-        const total = file.size;
-
-        // Send chunks with basic backpressure
-        for (let offset = 0; offset < total; offset += chunkSize) {
-          const slice = file.slice(offset, offset + chunkSize);
-          const buf = await slice.arrayBuffer();
-          conn.send(buf);
-          sent += buf.byteLength;
-
-          const dc = conn?._dc;
-          while (dc && dc.bufferedAmount > 8 * 1024 * 1024) {
-            await new Promise(r => setTimeout(r, 40));
-          }
-
-          const percent = total ? (sent / total) * 100 : 0;
-          showProgress({ title: 'Sending…', sub: 'Transferring…', percent, doneBytes: sent, totalBytes: total, icon: '⇄' });
-        }
-
-        conn.send({ t: 'end' });
-        showProgress({ title: 'Sending…', sub: 'Done!', percent: 100, doneBytes: total, totalBytes: total, icon: '⇄' });
-
-        // Small delay so receiver finishes
-        setTimeout(() => {
-          try { conn.close(); } catch {}
-          try { peer.destroy(); } catch {}
-          resetToMain();
-          showToast('Transfer complete.');
-        }, 800);
-      } catch (err) {
-        console.error(err);
-        showToast(err?.message || 'Transfer failed.');
-        try { conn.close(); } catch {}
-        try { peer.destroy(); } catch {}
-        resetToMain();
-      }
-    });
-
-    conn.on('error', (e) => {
-      console.error(e);
-      showToast('Connection error.');
-      resetToMain();
-    });
-  });
 }
 
 function wireUI() {
@@ -539,8 +556,7 @@ function wireUI() {
   els.fileInput?.addEventListener('change', () => {
     const f = els.fileInput.files?.[0];
     if (!f) return;
-    state.file = f;
-    updateFileUI();
+    handleFileSelection(f);
   });
 
   // Drag & drop
@@ -559,8 +575,7 @@ function wireUI() {
   els.dropzone?.addEventListener('drop', (e) => {
     const f = e.dataTransfer?.files?.[0];
     if (!f) return;
-    state.file = f;
-    updateFileUI();
+    handleFileSelection(f);
   });
 
   // Mode toggles
@@ -575,42 +590,48 @@ function wireUI() {
 
   // Encryption
   els.encYes?.addEventListener('click', () => {
-    if (!(state.uploadEnabled && state.e2ee && (window.isSecureContext || location.hostname === 'localhost'))) {
+    if (!(state.uploadEnabled && state.e2ee && window.isSecureContext)) {
       showToast('Encryption requires HTTPS and server support.');
       return;
     }
     state.encrypt = true;
     setSelected(els.encYes, els.encNo, true);
+    if (state.file) handleFileSelection(state.file);
   });
   els.encNo?.addEventListener('click', () => {
     state.encrypt = false;
     setSelected(els.encYes, els.encNo, false);
+    if (state.file) handleFileSelection(state.file);
   });
 
-  // Lifetime input - clamp to max
-  const onLifetimeChange = () => {
-    if (!state.uploadEnabled) return;
-    const ms = lifetimeMsFromUI();
-    const clamped = clampLifetimeMs(ms);
-    if (ms !== clamped && state.maxLifetimeHours > 0) {
-      // Snap UI to max
-      const maxH = state.maxLifetimeHours;
-      if (els.lifetimeUnit.value === 'days') {
-        const maxDays = Math.floor(maxH / 24);
-        if (maxDays >= 1) {
-          els.lifetimeValue.value = String(maxDays);
-        } else {
-          els.lifetimeUnit.value = 'hours';
-          els.lifetimeValue.value = String(Math.max(1, Math.floor(maxH)));
-        }
-      } else {
-        els.lifetimeValue.value = String(Math.max(1, Math.floor(maxH)));
-      }
-      showToast('Lifetime capped by server limit.');
+  // Lifetime input - mirror Electron behavior
+  const normaliseLifetimeValue = () => {
+    if (els.lifetimeUnit.value === 'unlimited') {
+      els.lifetimeValue.value = '0';
+      setDisabled(els.lifetimeValue, true);
+      return;
+    }
+
+    setDisabled(els.lifetimeValue, false);
+    const value = parseFloat(els.lifetimeValue.value);
+    if (Number.isNaN(value) || value <= 0) {
+      els.lifetimeValue.value = '0.5';
     }
   };
-  els.lifetimeValue?.addEventListener('change', onLifetimeChange);
-  els.lifetimeUnit?.addEventListener('change', onLifetimeChange);
+
+  els.lifetimeValue?.addEventListener('blur', () => {
+    if (!state.uploadEnabled) return;
+    normaliseLifetimeValue();
+    validateLifetimeInput();
+    updateStartEnabled();
+  });
+
+  els.lifetimeUnit?.addEventListener('change', () => {
+    if (!state.uploadEnabled) return;
+    normaliseLifetimeValue();
+    validateLifetimeInput();
+    updateStartEnabled();
+  });
 
   // Help
   els.helpMode?.addEventListener('click', () => {
@@ -624,7 +645,7 @@ function wireUI() {
   els.startBtn?.addEventListener('click', async () => {
     try {
       if (state.mode === 'standard') await startStandardUpload();
-      else await startP2PSend();
+      else await startP2PSendFlow();
     } catch (err) {
       console.error(err);
       showToast(err?.message || 'Something went wrong.');
@@ -638,19 +659,31 @@ function wireUI() {
   els.newUpload?.addEventListener('click', resetToMain);
 
   // Enter code
-  const goWithCode = () => {
+  const goWithCode = async () => {
     const value = normalizeCode(els.codeInput.value);
     if (!value) return;
-    if (/^https?:\/\//i.test(value)) return (window.location.href = value);
-    if (isUuidLike(value)) return (window.location.href = `/${value}`);
-    if (isP2PCodeLike(value)) return (window.location.href = `/p2p/${encodeURIComponent(value)}`);
-    // fallback: try P2P
-    window.location.href = `/p2p/${encodeURIComponent(value)}`;
+
+    setDisabled(els.codeGo, true);
+    try {
+      const result = await coreClient.resolveShareTarget(location.origin, value);
+      if (!result?.valid || !result?.target) {
+        showToast(result?.reason || 'That sharing code could not be validated.', 'warning');
+        return;
+      }
+      window.location.href = result.target;
+    } catch (err) {
+      console.error(err);
+      showToast(err?.message || 'Failed to validate sharing code.', 'warning');
+    } finally {
+      setDisabled(els.codeGo, false);
+    }
   };
 
-  els.codeGo?.addEventListener('click', goWithCode);
+  els.codeGo?.addEventListener('click', () => {
+    void goWithCode();
+  });
   els.codeInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') goWithCode();
+    if (e.key === 'Enter') void goWithCode();
   });
 
   // Reset on ESC
@@ -677,6 +710,11 @@ async function init() {
 
   // If standard is disabled, updateCapabilitiesUI will force P2P mode.
   updateCapabilitiesUI();
+  updateStartEnabled();
+
+  if (state.p2pEnabled && !state.p2pSecureOk) {
+    showToast('Direct transfer requires HTTPS (or localhost).', 'warning');
+  }
 }
 
 init();
