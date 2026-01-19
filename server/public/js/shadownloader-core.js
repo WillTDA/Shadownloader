@@ -432,14 +432,17 @@ export async function startP2PReceive({
 
         if (!writer) return;
 
-        let buf;
-        if (data instanceof ArrayBuffer) buf = new Uint8Array(data);
-        else if (ArrayBuffer.isView(data)) buf = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-        else if (data instanceof Blob) buf = new Uint8Array(await data.arrayBuffer());
-        else return;
+        let bufPromise;
+        if (data instanceof ArrayBuffer) bufPromise = Promise.resolve(new Uint8Array(data));
+        else if (ArrayBuffer.isView(data)) {
+          bufPromise = Promise.resolve(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+        } else if (data instanceof Blob) {
+          bufPromise = data.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+        } else return;
 
         writeQueue = writeQueue
           .then(async () => {
+            const buf = await bufPromise;
             await writer.write(buf);
             received += buf.byteLength;
             const percent = total ? Math.min(100, (received / total) * 100) : 0;
