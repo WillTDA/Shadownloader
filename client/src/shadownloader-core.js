@@ -182,6 +182,10 @@ export async function startP2PSend({
   codeGenerator = generateP2PCode,
   maxAttempts = 4,
   chunkSize = 256 * 1024,
+  readyTimeoutMs = 8000,
+  endAckTimeoutMs = 15000,
+  bufferHighWaterMark = 8 * 1024 * 1024,
+  bufferLowWaterMark = 2 * 1024 * 1024,
   onCode,
   onStatus,
   onProgress,
@@ -204,6 +208,8 @@ export async function startP2PSend({
 
   let stopped = false;
   let activeConn = null;
+  let transferActive = false;
+  let transferCompleted = false;
 
   const stop = () => {
     stopped = true;
@@ -213,15 +219,55 @@ export async function startP2PSend({
 
   peer.on('connection', (conn) => {
     if (stopped) return;
+    if (activeConn) {
+      try { conn.send({ t: 'error', message: 'Another receiver is already connected.' }); } catch {}
+      try { conn.close(); } catch {}
+      return;
+    }
     activeConn = conn;
     onStatus?.({ phase: 'connected', message: 'Connected. Starting transfer…' });
 
+    let readyResolve = null;
+    let ackResolve = null;
+    const readyPromise = new Promise((resolve) => {
+      readyResolve = resolve;
+    });
+    const ackPromise = new Promise((resolve) => {
+      ackResolve = resolve;
+    });
+
+    conn.on('data', (data) => {
+      if (!data || typeof data !== 'object' || data instanceof ArrayBuffer || ArrayBuffer.isView(data) || data instanceof Blob) return;
+      if (!data.t) return;
+      if (data.t === 'ready') {
+        readyResolve?.();
+        return;
+      }
+      if (data.t === 'ack' && data.phase === 'end') {
+        ackResolve?.(data);
+        return;
+      }
+      if (data.t === 'error') {
+        onError?.(new ShadownloaderNetworkError(data.message || 'Receiver reported an error.'));
+        stop();
+      }
+    });
+
     conn.on('open', async () => {
       try {
+        transferActive = true;
         conn.send({ t: 'meta', name: file.name, size: file.size, mime: file.type || 'application/octet-stream' });
 
         let sent = 0;
         const total = file.size;
+        const dc = conn?._dc;
+        if (dc && Number.isFinite(bufferLowWaterMark)) {
+          try { dc.bufferedAmountLowThreshold = bufferLowWaterMark; } catch {}
+        }
+
+        if (readyPromise) {
+          await Promise.race([readyPromise, sleep(readyTimeoutMs).catch(() => null)]);
+        }
 
         for (let offset = 0; offset < total; offset += chunkSize) {
           const slice = file.slice(offset, offset + chunkSize);
@@ -229,9 +275,20 @@ export async function startP2PSend({
           conn.send(buf);
           sent += buf.byteLength;
 
-          const dc = conn?._dc;
-          while (dc && dc.bufferedAmount > 8 * 1024 * 1024) {
-            await new Promise((resolve) => setTimeout(resolve, 40));
+          if (dc) {
+            while (dc.bufferedAmount > bufferHighWaterMark) {
+              await new Promise((resolve) => {
+                const fallback = setTimeout(resolve, 60);
+                try {
+                  dc.addEventListener('bufferedamountlow', () => {
+                    clearTimeout(fallback);
+                    resolve();
+                  }, { once: true });
+                } catch {
+                  // fallback only
+                }
+              });
+            }
           }
 
           const percent = total ? (sent / total) * 100 : 0;
@@ -240,7 +297,21 @@ export async function startP2PSend({
 
         conn.send({ t: 'end' });
         onProgress?.({ sent: file.size, total: file.size, percent: 100 });
+
+        const ackResult = ackPromise
+          ? await Promise.race([ackPromise, sleep(endAckTimeoutMs).catch(() => null)])
+          : null;
+        if (ackResult && typeof ackResult === 'object') {
+          onProgress?.({
+            sent: Number(ackResult.received) || file.size,
+            total: Number(ackResult.total) || file.size,
+            percent: 100,
+          });
+        }
+        transferCompleted = true;
+        transferActive = false;
         onComplete?.();
+        stop();
       } catch (err) {
         onError?.(err);
         stop();
@@ -249,6 +320,13 @@ export async function startP2PSend({
 
     conn.on('error', (err) => {
       onError?.(err);
+      stop();
+    });
+
+    conn.on('close', () => {
+      if (!transferCompleted && transferActive && !stopped) {
+        onError?.(new ShadownloaderNetworkError('Receiver disconnected before transfer completed.'));
+      }
       stop();
     });
   });
@@ -295,7 +373,6 @@ export async function startP2PReceive({
 
     conn.on('open', () => {
       onStatus?.({ phase: 'connected', message: 'Waiting for file details…' });
-      try { conn.send({ t: 'ready' }); } catch {}
     });
 
     conn.on('data', async (data) => {
@@ -313,12 +390,14 @@ export async function startP2PReceive({
             const stream = streamSaverObj.createWriteStream(name, total ? { size: total } : undefined);
             writer = stream.getWriter();
             onProgress?.({ received, total, percent: 0 });
+            try { conn.send({ t: 'ready' }); } catch {}
             return;
           }
 
           if (data.t === 'end') {
             if (writer) await writer.close();
             onComplete?.({ received, total });
+            try { conn.send({ t: 'ack', phase: 'end', received, total }); } catch {}
             return;
           }
 
@@ -333,6 +412,7 @@ export async function startP2PReceive({
         let buf;
         if (data instanceof ArrayBuffer) buf = new Uint8Array(data);
         else if (ArrayBuffer.isView(data)) buf = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        else if (data instanceof Blob) buf = new Uint8Array(await data.arrayBuffer());
         else return;
 
         await writer.write(buf);
