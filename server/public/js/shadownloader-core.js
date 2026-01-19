@@ -369,6 +369,7 @@ export async function startP2PReceive({
   let received = 0;
   let lastProgressSentAt = 0;
   const progressIntervalMs = 120;
+  let writeQueue = Promise.resolve();
 
   const stop = () => {
     try { writer?.abort(); } catch {}
@@ -394,6 +395,7 @@ export async function startP2PReceive({
             const name = String(data.name || 'file');
             total = Number(data.size) || 0;
             received = 0;
+            writeQueue = Promise.resolve();
             onMeta?.({ name, total });
 
             if (!streamSaverObj?.createWriteStream) {
@@ -407,6 +409,7 @@ export async function startP2PReceive({
           }
 
           if (data.t === 'end') {
+            await writeQueue;
             if (total && received < total) {
               const err = new ShadownloaderNetworkError('Transfer ended before the full file was received.');
               try { conn.send({ t: 'error', message: err.message }); } catch {}
@@ -432,15 +435,17 @@ export async function startP2PReceive({
         else if (data instanceof Blob) buf = new Uint8Array(await data.arrayBuffer());
         else return;
 
-        await writer.write(buf);
-        received += buf.byteLength;
-        const percent = total ? Math.min(100, (received / total) * 100) : 0;
-        onProgress?.({ received, total, percent });
-        const now = Date.now();
-        if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
-          lastProgressSentAt = now;
-          try { conn.send({ t: 'progress', received, total }); } catch {}
-        }
+        writeQueue = writeQueue.then(async () => {
+          await writer.write(buf);
+          received += buf.byteLength;
+          const percent = total ? Math.min(100, (received / total) * 100) : 0;
+          onProgress?.({ received, total, percent });
+          const now = Date.now();
+          if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
+            lastProgressSentAt = now;
+            try { conn.send({ t: 'progress', received, total }); } catch {}
+          }
+        });
       } catch (err) {
         onError?.(err);
         stop();
