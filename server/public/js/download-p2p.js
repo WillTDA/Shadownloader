@@ -126,6 +126,10 @@ async function start() {
       onError: (err) => {
         if (transferCompleted) return;
         console.error(err);
+        if (err?.message.startsWith('Could not connect to peer')) {
+          showError('Connection Failed', 'Could not connect to the sender. Check the code, ensure the sender is online, and try again.');
+          return;
+        }
         showError('Transfer Error', 'An error occurred during the transfer.');
       },
       onDisconnect: () => {
@@ -135,7 +139,7 @@ async function start() {
     });
   } catch (err) {
     console.error(err);
-    showError('Connection failed', 'Could not connect.');
+    showError('Connection Failed', 'Could not connect.');
   }
 }
 
