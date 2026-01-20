@@ -139,7 +139,7 @@ async function start() {
     });
   } catch (err) {
     console.error(err);
-    showError('Connection Failed', 'Could not connect.');
+    showError('Connection Failed', 'Could not connect to the sender. Check the code and try again.');
   }
 }
 
