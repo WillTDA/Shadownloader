@@ -1,9 +1,9 @@
 <div align="center">
-   <img alt="Shadownloader Logo" src="./shadownloader.png" style="width:100px;height:auto;margin-bottom:1rem;" />
+   <img alt="Dropgate Logo" src="./dropgate.png" style="width:100px;height:auto;margin-bottom:1rem;" />
 
-   # Shadownloader
+   # Dropgate
 
-   <p style="margin-bottom:1rem;">A privacy-first, end-to-end encrypted file sharing system built for simplicity, security, and self-hosting.</p>
+   <p style="margin-bottom:1rem;">A self-hostable, privacy-first file sharing system with both hosted upload and direct P2P transfer capabilities.</p>
 </div>
 
 <div align="center">
@@ -19,62 +19,74 @@
 
 ## 🌍 Overview
 
-**Shadownloader** is a modern, privacy-respecting file sharing system composed of two parts:
-- [**Shadownloader Client**](./client/README.md): A lightweight Electron app for uploading, encrypting, and sharing files.
-- [**Shadownloader Server**](./server/README.md): A Node.js backend built to handle secure file delivery, with optional end-to-end encryption and configurable storage.
+**Dropgate** is a modern, privacy-respecting file sharing system designed to be easy to self-host and easy to use.
 
-In today’s world, privacy and anonymity are more important than ever.  
-Shadownloader was designed to make **secure file sharing accessible**, **transparent**, and **fully self-hostable** — whether on a home NAS, VPS, or Docker container.
+It ships as two parts:
+- [**Dropgate Client**](./client/README.md): A lightweight Electron app for uploading, encrypting, and sharing files.
+- [**Dropgate Server**](./server/README.md): A Node.js backend that hosts the API + Web UI, with optional end-to-end encryption and configurable storage.
+
+Dropgate supports **two ways to transfer files**:
+- **Hosted upload (classic mode)** — you upload to your server, share a link, and the server holds the file temporarily.
+- **Direct transfer (P2P)** — the file can move device-to-device, with the server only helping peers find each other.
+
+In today’s world, privacy and anonymity are more important than ever.
+Dropgate was built to make **secure file sharing accessible**, **transparent**, and **fully self-hostable** — whether on a home NAS, a VPS, or in Docker.
 
 
 ## ✨ Features
 
-- 🔐 **End-to-End Encryption (E2EE)** – Files are encrypted client-side and decrypted only by the recipient.
-- 🕵️ **Privacy First** – No analytics, no tracking, no logging of file contents.
-- ⚙️ **Configurable Server Controls** – Easily tune file size limits, rate limits, and file persistence.
-- 💻 **Cross-Platform Client** – Built with Electron for a smooth experience on Windows, macOS, and Linux.
-- 🧩 **Self-Host Ready** – Deploy with Docker, NGINX, Caddy, Cloudflare Tunnel, or even Tailscale.
-- 🧠 **Lightweight and Fast** – Minimal dependencies and a focus on clean, efficient file transfers.
+- 🔐 **End-to-End Encryption (E2EE)** – Encrypt on the sender device, decrypt on the recipient device. Encryption keys never need to reach the server.
+- 🕵️ **Privacy First** – No analytics, no tracking, and no logging of file contents.
+- 🔗 **Share Links That “Just Work”** – Simple one-time use links for recipients.
+- 🚀 **Direct Transfer (P2P)** – Great for big files or “zero-storage” sharing (when enabled).
+- 🧩 **Built-in Web UI** – Send and receive from a browser, no install required.
+- ⚙️ **Configurable Server Controls** – Tune size limits, rate limits, retention, and storage caps.
+- 🧰 **Self-Host Ready** – Works behind common reverse proxies and tunnels.
 
 
 ## 🧰 Project Structure
 
 ```
-
-/Shadownloader
+/Dropgate
 ├── client/    # Electron-based uploader app (GPL-3.0)
-├── server/    # Node.js-based file server with customisable settings (AGPL-3.0)
-
-````
+├── server/    # Node.js server + Web UI (AGPL-3.0)
+├── docs/      # Privacy and troubleshooting notes
+```
 
 
 ## 🧩 Getting Started
 
 ### Clone the Repository
+
 ```bash
-git clone https://github.com/WillTDA/Shadownloader.git
-cd Shadownloader
-````
-
-### Client
-
-See the [client README](./client/README.md) for setup and build instructions.
+git clone https://github.com/WillTDA/Dropgate.git
+cd Dropgate
+```
 
 ### Server
 
 See the [server README](./server/README.md) for configuration, Docker setup, and deployment.
 
+### Client
+
+See the [client README](./client/README.md) for installation, usage, and build instructions.
+
 
 ## 🔒 Privacy and Security Philosophy
 
-Shadownloader’s design ensures **you stay in control of your data**:
+Dropgate’s design is built around **you staying in control of your data**:
 
-* E2EE ensures that even the server operator cannot read your files.
-* Temporary uploads are securely deleted after download.
-* Self-hosting means your files never touch third-party storage unless *you choose to use it*.
+* E2EE means even the server operator can’t read encrypted uploads.
+* Hosted uploads are intended to be temporary (downloaded and/or expired, then removed).
+* Direct transfer can avoid server storage entirely (when enabled).
 
-Whether you deploy via Docker, Cloudflare Tunnel, or on your home server,
-Shadownloader keeps your files **private**, **ephemeral**, and **under your control**.
+If you self-host, you decide how strict you want to be — from private-only to public-facing with limits.
+
+
+## 📚 Docs
+
+- [`docs/PRIVACY.md`](./docs/PRIVACY.md)
+- [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md)
 
 
 ## 📜 Licenses
@@ -93,8 +105,8 @@ Shadownloader keeps your files **private**, **ephemeral**, and **under your cont
 ## 🙂 Contact Us
 
 * 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Shadownloader/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
 
 
 <div align="center">

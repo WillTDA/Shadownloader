@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shadownloader Client</title>
+    <title>Dropgate Client</title>
     <script>
         (() => {
             const mql = window.matchMedia("(prefers-color-scheme: dark)");
@@ -24,7 +24,7 @@
 <body class="p-4">
 
     <div class="container">
-        <h3 class="text-center mb-4">Shadownloader Client</h3>
+        <h3 class="text-center mb-4">Dropgate Client</h3>
 
         <div id="drop-zone" class="text-center p-5 mb-3">
             <p>Drag & Drop File Here</p>
@@ -37,7 +37,7 @@
         <div class="mb-3">
             <label for="server-url" class="form-label">Server URL</label>
             <div class="input-group">
-                <input type="url" class="form-control" id="server-url" placeholder="http://your-server.com">
+                <input type="url" class="form-control" id="server-url" placeholder="https://dropgate.link" value="https://dropgate.link">
                 <button class="btn btn-outline-secondary" type="button" id="test-connection-btn">Test</button>
             </div>
             <div id="connection-status" class="form-text mt-1" style="min-height: 1.2em;"></div>

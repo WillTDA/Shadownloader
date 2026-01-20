@@ -1,0 +1,38 @@
+{
+    "name": "Dropgate",
+    "short_name": "Dropgate",
+    "description": "A lightweight, open-source, privacy-focused file sharing tool.",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "portrait-primary",
+    "background_color": "#ffffff",
+    "theme_color": "#57F287",
+    "categories": [
+        "productivity",
+        "utilities"
+    ],
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "/assets/icon.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ],
+    "screenshots": [
+        {
+            "src": "/assets/icon.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "form_factor": "wide"
+        },
+        {
+            "src": "/assets/icon.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "form_factor": "narrow"
+        }
+    ]
+}

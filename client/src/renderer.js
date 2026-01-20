@@ -1,4 +1,4 @@
-import { ShadownloaderClient, lifetimeToMs } from './shadownloader-core.js';
+import { DropgateClient, lifetimeToMs } from './dropgate-core.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // --- Core client (shared logic for Electron + Web UI) ---
         const clientVersion = await window.electronAPI.getClientVersion();
-        const coreClient = new ShadownloaderClient({
+        const coreClient = new DropgateClient({
             clientVersion,
             logger: (level, message, meta) => {
                 // Keep logs useful, but not spammy.
@@ -343,6 +343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const lifetimeMs = getLifetimeInMs();
+            saveSettings();
 
             try {
                 const result = await coreClient.uploadFile({

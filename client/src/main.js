@@ -27,7 +27,7 @@ try {
 log('process.argv on startup:', JSON.stringify(process.argv));
 
 if (process.platform === 'win32') {
-    app.setAppUserModelId('com.diamonddigitaldev.shadownloaderclient');
+    app.setAppUserModelId('com.diamonddigitaldev.dropgateclient');
 }
 
 const store = new Store();
@@ -40,14 +40,14 @@ function getIconPath() {
     let iconName;
     switch (process.platform) {
         case 'win32':
-            iconName = 'shadownloader.ico';
+            iconName = 'dropgate.ico';
             break;
         case 'darwin': // macOS
-            iconName = 'shadownloader.icns';
+            iconName = 'dropgate.icns';
             break;
         case 'linux':
         default:
-            iconName = 'shadownloader.png';
+            iconName = 'dropgate.png';
             break;
     }
     return path.join(__dirname, 'img', iconName);
@@ -119,7 +119,7 @@ function createWindow() {
         width: 500,
         height: 850,
         resizable: false,
-        title: "Shadownloader Client",
+        title: "Dropgate Client",
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,

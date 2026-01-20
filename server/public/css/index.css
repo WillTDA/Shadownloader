@@ -1,0 +1,208 @@
+/* Web UI (Main Menu) — Bootstrap-native look */
+
+.container-main {
+  max-width: 980px;
+}
+
+.dropzone {
+  border: 2px dashed var(--bs-border-color);
+  border-radius: 1rem;
+  padding: 2.25rem 1.5rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+  min-height: 300px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.dropzone:focus {
+  outline: none;
+  box-shadow: 0 0 0 .25rem rgba(var(--bs-primary-rgb), .25);
+}
+
+.dropzone.dragover {
+  border-color: rgba(var(--bs-primary-rgb), 1);
+  background-color: rgba(var(--bs-primary-rgb), .06);
+  transform: translateY(-1px);
+}
+
+.help-btn {
+  width: 32px;
+  height: 32px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.help-btn .material-icons-round {
+  font-size: 20px;
+}
+
+/* Consistent icon sizing across UI */
+.material-icons-round {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.material-icons-round.sm {
+  font-size: 18px;
+}
+
+.material-icons-round.lg {
+  font-size: 32px;
+}
+
+/* Toast notification styling */
+.toast-notification {
+  border-left: 4px solid;
+  color: var(--bs-body-color);
+}
+
+.toast-notification.toast-info {
+  border-left-color: var(--bs-info);
+  background-color: var(--bs-info);
+  color: #fff;
+}
+
+.toast-notification.toast-warning {
+  border-left-color: var(--bs-warning);
+  background-color: var(--bs-warning);
+  color: #000;
+}
+
+.toast-notification.toast-danger {
+  border-left-color: var(--bs-danger);
+  background-color: var(--bs-danger);
+  color: #fff;
+}
+
+.toast-notification.toast-success {
+  border-left-color: var(--bs-success);
+  background-color: var(--bs-success);
+  color: #fff;
+}
+
+.form-control:disabled,
+.form-select:disabled,
+.form-check-input:disabled,
+.btn:disabled,
+.btn.disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
+input[type="number"]:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
+#statusAlert {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1080;
+  width: min(720px, calc(100% - 2rem));
+  margin: 0;
+}
+
+.btn-group .btn-outline-primary:not(.active):not(:disabled):hover,
+.btn-group .btn-outline-primary:not(.active):not(.disabled):hover {
+  background-color: rgba(var(--bs-primary-rgb), 0.12);
+  border-color: rgba(var(--bs-primary-rgb), 0.35);
+  color: var(--bs-primary);
+}
+
+.btn-group .btn-outline-primary:not(.active):not(:disabled):active,
+.btn-group .btn-outline-primary:not(.active):not(.disabled):active {
+  background-color: rgba(var(--bs-primary-rgb), 0.2);
+  border-color: rgba(var(--bs-primary-rgb), 0.45);
+  color: var(--bs-primary);
+}
+
+.btn-group .btn:disabled,
+.btn-group .btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.code-box {
+  display: inline-block;
+  padding: .65rem 1rem;
+  border-radius: .75rem;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 1.1rem;
+  letter-spacing: .06em;
+}
+
+.encryption-message {
+  font-size: 0.875rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0;
+  min-height: 1.2rem;
+}
+
+#qrContainer {
+  padding: 1rem;
+  background-color: #ffffff;
+  border-radius: 0.5rem;
+  border: 1px solid var(--bs-border-color);
+}
+
+/* Responsive square area for the QR */
+.qr-wrap {
+  width: min(70vw, 320px);
+  /* scales with viewport, capped */
+  aspect-ratio: 1 / 1;
+  /* always square */
+  margin-inline: auto;
+  display: grid;
+  place-items: center;
+}
+
+/* Make whatever qr-code-styling inserts (svg/canvas/img) fill the wrapper */
+#qrCanvas>svg,
+#qrCanvas>canvas,
+#qrCanvas>img {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+/* Button icons - standardized size */
+.btn .material-icons-round,
+.input-group .btn .material-icons-round {
+  font-size: 18px;
+  line-height: 1;
+  vertical-align: -4px;
+}
+
+/* Progress icon size */
+#progressIcon .material-icons-round {
+  font-size: 48px;
+}
+
+/* Status card icons */
+#icon-container .material-icons-round,
+.text-primary .material-icons-round,
+.text-success .material-icons-round,
+.text-danger .material-icons-round,
+.text-warning .material-icons-round {
+  font-size: 48px;
+  line-height: 1;
+}
+
+/* Make modal content breathe on tiny screens */
+@media (max-width: 420px) {
+  .modal-content {
+    border-radius: 16px;
+  }
+}

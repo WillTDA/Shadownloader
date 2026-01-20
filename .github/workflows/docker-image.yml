@@ -1,4 +1,4 @@
-name: Build and Publish Shadownloader Server to Docker Hub
+name: Build and Publish Dropgate Server to Docker Hub
 on:
   [workflow_dispatch]
 jobs:
@@ -21,11 +21,11 @@ jobs:
     - name: Build Image
       run: |
         docker build \
-          -t willtda/shadownloader-server:latest \
-          -t willtda/shadownloader-server:${{ steps.version.outputs.VERSION }} \
+          -t willtda/dropgate-server:latest \
+          -t willtda/dropgate-server:${{ steps.version.outputs.VERSION }} \
           ./server/
     
     - name: Push Image to Docker Hub
       run: |
-        docker push willtda/shadownloader-server:latest
-        docker push willtda/shadownloader-server:${{ steps.version.outputs.VERSION }}
+        docker push willtda/dropgate-server:latest
+        docker push willtda/dropgate-server:${{ steps.version.outputs.VERSION }}

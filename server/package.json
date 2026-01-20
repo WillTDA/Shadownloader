@@ -1,7 +1,7 @@
 {
-  "name": "shadownloader-server",
+  "name": "dropgate-server",
   "version": "2.0.0",
-  "description": "Shadownloader is an ephemeral self-hosted file sharing system that prioritises anonymity and data privacy. Upload a file, and the it disappears the moment it is downloaded by someone else.",
+  "description": "A self-hostable, privacy-first file sharing system with both hosted upload and direct P2P transfer capabilities.",
   "main": "server.js",
   "funding": {
     "type": "buymeacoffee",
@@ -23,12 +23,17 @@
   "author": "Diamond Digital Development <https://diamonddigital.dev>",
   "license": "AGPL-3.0-only",
   "dependencies": {
+    "bootstrap": "^5.3.8",
     "content-disposition": "^1.0.0",
     "cors": "^2.8.5",
+    "ejs": "^4.0.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.2.1",
     "file-system-db": "^2.1.0",
     "helmet": "^8.1.0",
+    "peer": "^1.0.2",
+    "peerjs": "^1.5.5",
+    "qr-code-styling": "^1.9.2",
     "uuid": "^13.0.0"
   }
 }

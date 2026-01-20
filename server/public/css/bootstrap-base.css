@@ -1,0 +1,65 @@
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 1rem;
+  background-color: var(--bs-body-bg);
+  color: var(--bs-body-color);
+}
+
+main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.4s ease;
+}
+
+.container-main {
+  max-width: 860px;
+  width: 100%;
+}
+
+.card {
+  border-radius: 1rem;
+  overflow: hidden;
+  border: 2px solid var(--bs-border-color);
+}
+
+#icon-container .material-icons-round {
+  font-size: 3rem;
+}
+
+.footer {
+  padding: 1.5rem 0;
+  font-size: 0.875rem;
+  color: var(--bs-secondary-color);
+}
+
+.footer a {
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+  text-underline-offset: 2px;
+  font-weight: 500;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

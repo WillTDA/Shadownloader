@@ -1,40 +1,99 @@
-const log = (level, message) => {
-    const lvl = String(level || '').toLowerCase();
-    const prefix = `[${new Date().toISOString()}] [${String(level).toUpperCase()}]`;
-    const out = `${prefix} ${message}`;
-    if (lvl === 'error') return console.error(out);
-    if (lvl === 'warn') return console.warn(out);
-    if (lvl === 'info') return console.info(out);
-    return console.log(out);
+const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
+const normalizeLogLevel = (value) => {
+    const upper = String(value || '').trim().toUpperCase();
+    return LOG_LEVELS[upper] !== undefined ? upper : 'INFO';
+};
+const rawLogLevel = process.env.LOG_LEVEL;
+const LOG_LEVEL = normalizeLogLevel(rawLogLevel || 'INFO');
+const LOG_LEVEL_NUM = LOG_LEVELS[LOG_LEVEL];
+
+const shouldLog = (level) => {
+    const normalized = normalizeLogLevel(level);
+    return LOG_LEVELS[normalized] <= LOG_LEVEL_NUM;
 };
 
-log('info', 'Shadownloader Server is starting...');
+const log = (level, message) => {
+    const normalized = normalizeLogLevel(level);
+    if (!shouldLog(normalized)) return;
+    const prefix = `[${new Date().toISOString()}] [${normalized}]`;
+    const out = `${prefix} ${message}`;
+    if (normalized === 'ERROR') return console.error(out);
+    if (normalized === 'WARN') return console.warn(out);
+    if (normalized === 'INFO') return console.info(out);
+    return console.debug(out);
+};
+
+if (rawLogLevel && normalizeLogLevel(rawLogLevel) === 'INFO' && String(rawLogLevel).trim().toUpperCase() !== 'INFO') {
+    log('warn', 'Invalid LOG_LEVEL value. Defaulting to INFO.');
+}
+
+log('info', 'Dropgate Server is starting...');
 
 const { version } = require('./package.json');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const http = require('http');
 const express = require('express');
 const rateLimit = require('express-rate-limit').default;
 const helmet = require('helmet').default;
 const cors = require('cors');
+const { ExpressPeerServer } = require('peer');
 const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
 
-const serverName = process.env.SERVER_NAME || 'Shadownloader Server';
+const serverName = process.env.SERVER_NAME || 'Dropgate Server';
 log('info', `Server name: ${serverName}`);
 
-const enableE2EE = process.env.ENABLE_E2EE === 'true';
-log('info', `End-to-End Encryption (E2EE) Enabled: ${enableE2EE}`);
+const enableWebUI = process.env.ENABLE_WEB_UI !== 'false';
+const enableP2P = process.env.ENABLE_P2P !== 'false';
+const enableUpload = process.env.ENABLE_UPLOAD === 'true';
+if (!enableUpload && !enableP2P) {
+    log('error', 'Both UPLOAD and P2P are disabled. At least one protocol must be enabled for the server to function.');
+    process.exit(1);
+};
 
-if (enableE2EE) {
-    log('warn', 'E2EE is enabled. The server MUST be running behind a reverse proxy that provides a secure HTTPS connection.');
+log('info', `Upload Protocol Enabled: ${enableUpload}`);
+log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
+log('info', `Web UI Enabled: ${enableWebUI}`);
+
+// ===== P2P (WebRTC) configuration exposed to clients via /api/info =====
+const PEERJS_MOUNT_PATH = '/peerjs';
+
+const parseList = (raw) => {
+    if (!raw) return [];
+    return String(raw)
+        .split(/[\s,]+/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
+};
+
+// Default: public STUN (Cloudflare) so P2P works out of the box.
+const p2pStunUrls = process.env.P2P_STUN_SERVERS
+    ? parseList(process.env.P2P_STUN_SERVERS)
+    : ['stun:stun.cloudflare.com:3478'];
+
+const p2pIceServers = [];
+if (p2pStunUrls.length) p2pIceServers.push({ urls: p2pStunUrls });
+
+const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE !== 'false';
+if (enableUpload) log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
+
+if (enableUpload && uploadEnableE2EE) {
+    log('warn', 'Upload E2EE is enabled. The server MUST be running behind a reverse proxy that provides a secure HTTPS connection.');
     log('warn', 'Failure to provide a secure context will cause client-side decryption to fail in the browser.');
+}
+
+if (enableP2P) {
+    log('warn', 'P2P direct transfer requires a secure HTTPS context in browsers (localhost is the only exception).');
 }
 
 const app = express();
 const port = 52443;
+// We create the HTTP server manually so we can attach a PeerServer
+// to the same port/path (fixed mount: /peerjs).
+const server = http.createServer(app);
 
 const uploadDir = path.join(__dirname, 'uploads');
 const tmpDir = path.join(__dirname, 'uploads', 'tmp');
@@ -69,82 +128,98 @@ const getDirSize = (dirPath) => {
     return size;
 };
 
-const preserveUploads = process.env.PRESERVE_UPLOADS === 'true' || false;
-log('info', `PRESERVE_UPLOADS: ${preserveUploads}`);
+let preserveUploads = false;
+let maxFileSizeMB = 0;
+let maxStorageGB = 0;
+let maxFileLifetimeHours = 0;
+let MAX_FILE_SIZE_BYTES = Infinity;
+let MAX_STORAGE_BYTES = Infinity;
+let MAX_FILE_LIFETIME_MS = Infinity;
+let currentDiskUsage = 0;
+let fileDatabase = null;
+let ongoingUploads = null;
 
-let maxFileSizeMB = process.env.MAX_FILE_SIZE_MB ? process.env.MAX_FILE_SIZE_MB : 100;
-if (isNaN(maxFileSizeMB) || maxFileSizeMB < 0 || !Number.isInteger(Number(maxFileSizeMB))) {
-    log('error', 'Invalid MAX_FILE_SIZE_MB environment variable. It must be a non-negative integer.');
-    process.exit(1);
+if (enableUpload) {
+    preserveUploads = process.env.UPLOAD_PRESERVE_UPLOADS === 'true';
+    log('info', `UPLOAD_PRESERVE_UPLOADS: ${preserveUploads}`);
+
+    maxFileSizeMB = process.env.UPLOAD_MAX_FILE_SIZE_MB ? process.env.UPLOAD_MAX_FILE_SIZE_MB : 100;
+    if (isNaN(maxFileSizeMB) || maxFileSizeMB < 0 || !Number.isInteger(Number(maxFileSizeMB))) {
+        log('error', 'Invalid UPLOAD_MAX_FILE_SIZE_MB environment variable. It must be a non-negative integer.');
+        process.exit(1);
+    }
+
+    maxFileSizeMB = Number(maxFileSizeMB);
+    MAX_FILE_SIZE_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1000 * 1000;
+    log('info', `UPLOAD_MAX_FILE_SIZE_MB: ${maxFileSizeMB} MB`);
+    if (Number(maxFileSizeMB) === 0) {
+        log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
+    }
+
+    maxStorageGB = process.env.UPLOAD_MAX_STORAGE_GB ? process.env.UPLOAD_MAX_STORAGE_GB : 10;
+    if (isNaN(maxStorageGB) || maxStorageGB < 0) {
+        log('error', 'Invalid UPLOAD_MAX_STORAGE_GB environment variable. It must be a non-negative number.');
+        process.exit(1);
+    }
+
+    maxStorageGB = Number(maxStorageGB);
+    MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1000 * 1000 * 1000;
+    log('info', `UPLOAD_MAX_STORAGE_GB: ${maxStorageGB} GB`);
+    if (Number(maxStorageGB) === 0) {
+        log('warn', 'UPLOAD_MAX_STORAGE_GB is set to 0! Consider setting a limit on total storage used by uploaded files to prevent disk exhaustion.');
+    }
+
+    if (maxFileSizeMB > (maxStorageGB * 1000) && maxStorageGB !== 0) {
+        log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is larger than UPLOAD_MAX_STORAGE_GB! Any uploads larger than the allocated storage quota will be rejected.');
+    }
+
+    maxFileLifetimeHours = process.env.UPLOAD_MAX_FILE_LIFETIME_HOURS ? process.env.UPLOAD_MAX_FILE_LIFETIME_HOURS : 24;
+    if (isNaN(maxFileLifetimeHours) || maxFileLifetimeHours < 0) {
+        log('error', 'Invalid UPLOAD_MAX_FILE_LIFETIME_HOURS environment variable. It must be a non-negative number.');
+        process.exit(1);
+    }
+
+    maxFileLifetimeHours = Number(maxFileLifetimeHours);
+    MAX_FILE_LIFETIME_MS = maxFileLifetimeHours === 0 ? Infinity : maxFileLifetimeHours * 60 * 60 * 1000;
+    log('info', `UPLOAD_MAX_FILE_LIFETIME_HOURS: ${maxFileLifetimeHours} hours`);
+    if (Number(maxFileLifetimeHours) === 0) {
+        log('warn', 'UPLOAD_MAX_FILE_LIFETIME_HOURS is set to 0! Files will never expire.');
+    }
+
+    if (!preserveUploads) {
+        log('info', 'Clearing any existing uploads on startup...');
+        cleanupDir(uploadDir);
+    }
+    log('info', 'Clearing any zombie uploads and temp files...');
+    cleanupDir(tmpDir);
+
+    createDirIfNotExists(uploadDir);
+    createDirIfNotExists(tmpDir);
+
+    currentDiskUsage = getDirSize(uploadDir);
+    setInterval(() => { currentDiskUsage = getDirSize(uploadDir); }, 300000); // Sync every 5 minutes in case of discrepancies
+    if (maxStorageGB !== 0) {
+        log('info', `Current server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB`);
+    }
+
+    fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
+    ongoingUploads = new Map();
+    log('info', `File database is ready. (${preserveUploads ? 'persistent' : 'in-memory'})`);
+} else {
+    log('info', 'Upload protocol disabled. Removing upload storage directories if present.');
+    fs.rmSync(uploadDir, { recursive: true, force: true });
 }
-
-maxFileSizeMB = Number(maxFileSizeMB);
-const MAX_FILE_SIZE_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1024 * 1024;
-log('info', `MAX_FILE_SIZE_MB: ${maxFileSizeMB} MB`);
-if (Number(maxFileSizeMB) === 0) {
-    log('warn', 'MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
-}
-
-let maxStorageGB = process.env.MAX_STORAGE_GB ? process.env.MAX_STORAGE_GB : 10;
-if (isNaN(maxStorageGB) || maxStorageGB < 0) {
-    log('error', 'Invalid MAX_STORAGE_GB environment variable. It must be a non-negative number.');
-    process.exit(1);
-}
-
-maxStorageGB = Number(maxStorageGB);
-const MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1024 * 1024 * 1024;
-log('info', `MAX_STORAGE_GB: ${maxStorageGB} GB`);
-if (Number(maxStorageGB) === 0) {
-    log('warn', 'MAX_STORAGE_GB is set to 0! Consider setting a limit on total storage used by uploaded files to prevent disk exhaustion.');
-}
-
-if (maxFileSizeMB > (maxStorageGB * 1024) && maxStorageGB !== 0) {
-    log('warn', 'MAX_FILE_SIZE_MB is larger than MAX_STORAGE_GB! Any uploads larger than the allocated storage quota will be rejected.');
-}
-
-let maxFileLifetimeHours = process.env.MAX_FILE_LIFETIME_HOURS ? process.env.MAX_FILE_LIFETIME_HOURS : 24;
-if (isNaN(maxFileLifetimeHours) || maxFileLifetimeHours < 0) {
-    log('error', 'Invalid MAX_FILE_LIFETIME_HOURS environment variable. It must be a non-negative number.');
-    process.exit(1);
-}
-
-maxFileLifetimeHours = Number(maxFileLifetimeHours);
-const MAX_FILE_LIFETIME_MS = maxFileLifetimeHours === 0 ? Infinity : maxFileLifetimeHours * 60 * 60 * 1000;
-log('info', `MAX_FILE_LIFETIME_HOURS: ${maxFileLifetimeHours} hours`);
-if (Number(maxFileLifetimeHours) === 0) {
-    log('warn', 'MAX_FILE_LIFETIME_HOURS is set to 0! Files will never expire.');
-}
-
-if (!preserveUploads) {
-    log('info', 'Clearing any existing uploads on startup...');
-    cleanupDir(uploadDir);
-}
-log('info', 'Clearing any zombie uploads and temp files...');
-cleanupDir(tmpDir);
-
-
-
-
-createDirIfNotExists(uploadDir);
-createDirIfNotExists(tmpDir);
-
-let currentDiskUsage = getDirSize(uploadDir);
-setInterval(() => { currentDiskUsage = getDirSize(uploadDir); }, 300000); // Sync every 5 minutes in case of discrepancies
-if (maxStorageGB !== 0) {
-    log('info', `Current disk usage: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB`);
-}
-
-let fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
-let ongoingUploads = new Map();
-
-log('info', `File database is ready. (${preserveUploads ? 'persistent' : 'in-memory'})`);
 log('info', 'Configuring server endpoints and middleware...');
 
 app.set('trust proxy', 1); // Trust the first hop from a reverse proxy
-app.use(cors());
-app.use(express.static('public'));
-app.use(express.json());
 app.disable('x-powered-by');
+
+// Templating
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+app.use(cors());
+app.use(express.json());
 app.use((req, res, next) => {
     res.locals.nonce = crypto.randomBytes(16).toString('base64');
     next();
@@ -160,12 +235,39 @@ app.use(
                 ...helmet.contentSecurityPolicy.getDefaultDirectives(),
                 'upgrade-insecure-requests': null, // This should also be managed by the proxy
                 'script-src': ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
+                'style-src': ["'self'", "'unsafe-inline'"],
+                'connect-src': ["'self'", 'ws:', 'wss:'],
                 'frame-src': ["'self'", 'https://jimmywarting.github.io'], // For streamSaver
+                'worker-src': ["'self'", 'blob:'],
+                'child-src': ["'self'", 'blob:', 'https://jimmywarting.github.io'],
             },
         },
     })
 );
 
+// Static assets (after Helmet so headers apply)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Helper to serve vendor files
+const serveVendorFile = (filePath, contentType) => (req, res) => {
+    try {
+        const p = path.join(__dirname, 'node_modules', filePath);
+        if (!fs.existsSync(p)) return res.status(404).end();
+        res.setHeader('Content-Type', contentType);
+        res.sendFile(p);
+    } catch {
+        res.status(404).end();
+    }
+};
+
+// Self-host the PeerJS client if installed.
+// We keep the browser path stable so the Web UI can lazy-load it.
+app.get('/vendor/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
+
+// Self-host bootstrap CSS/JS from node_modules
+app.get('/vendor/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
+app.get('/vendor/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
 
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;
 const rateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS ? process.env.RATE_LIMIT_MAX_REQUESTS : 25;
@@ -195,381 +297,510 @@ if (Number(rateLimitMaxRequests) > 0 && Number(rateLimitWindowMs) > 0) {
         max: Number(rateLimitMaxRequests),
         standardHeaders: true,
         legacyHeaders: false,
-        message: { error: 'Too many requests, please try again later.' },
+        handler: (_req, res) => {
+            log('warn', 'Rate limit triggered. Request blocked.');
+            res.status(429).json({ error: 'Too many requests, please try again later.' });
+        },
     });
 }
 
 // Verify chunk uploads are valid, otherwise apply rate limiting
-const uploadAuth = (req, res, next) => {
-    const uploadId = req.headers['x-upload-id'] || req.body?.uploadId;
-    if (uploadId && ongoingUploads.has(uploadId)) {
-        return next();
-    }
-    return limiter(req, res, next);
-};
+const apiRouter = express.Router();
+const uploadRouter = express.Router();
 
-app.post('/upload/init', limiter, (req, res) => {
-    const uploadId = uuidv4();
-    const { filename, lifetime, isEncrypted, totalSize, totalChunks } = req.body;
+let uploadAuth = null;
 
-    if (isEncrypted && !enableE2EE) {
-        log('warn', 'Rejected an E2EE upload attempt because E2EE is disabled on the server.');
-        return res.status(400).json({ error: 'End-to-end encryption is not supported on this server.' });
-    }
-
-    // Validate filename
-    if (typeof filename !== 'string' || filename.trim().length === 0) {
-        return res.status(400).json({ error: 'Invalid filename. Must be a non-empty string.' });
-    }
-
-    // Validate isEncrypted (must be a boolean)
-    if (typeof isEncrypted !== 'boolean') {
-        return res.status(400).json({ error: 'Invalid isEncrypted. Must be a boolean.' });
-    }
-
-    // Validate file lifetime
-    if (typeof lifetime !== 'number' || !Number.isInteger(lifetime) || lifetime < 0) {
-        return res.status(400).json({ error: 'Invalid lifetime. Must be a non-negative integer (milliseconds).' });
-    }
-
-    // Validate Reservation Data
-    const size = parseInt(totalSize);
-    const chunks = parseInt(totalChunks);
-    if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) return res.status(400).json({ error: 'Invalid total size. Must be a positive integer.' });
-    if (typeof chunks !== 'number' || !Number.isInteger(chunks) || chunks <= 0) return res.status(400).json({ error: 'Invalid chunk count. Must be a positive integer.' });
-
-    // Check File Limit
-    if (size > MAX_FILE_SIZE_BYTES) {
-        return res.status(413).json({ error: `File exceeds limit of ${maxFileSizeMB} MB.` });
-    }
-
-    // Validate lifetime against max
-    if (MAX_FILE_LIFETIME_MS !== Infinity) {
-        if (lifetime === 0) {
-            return res.status(400).json({ error: `Server does not allow unlimited file lifetime. Max: ${maxFileLifetimeHours} hours.` });
+if (enableUpload) {
+    uploadAuth = (req, res, next) => {
+        const uploadId = req.headers['x-upload-id'] || req.body?.uploadId;
+        if (uploadId && ongoingUploads.has(uploadId)) {
+            return next();
         }
-        if (lifetime > MAX_FILE_LIFETIME_MS) {
-            return res.status(400).json({ error: `File lifetime exceeds limit of ${maxFileLifetimeHours} hours.` });
+        return limiter(req, res, next);
+    };
+
+    uploadRouter.post('/init', limiter, (req, res) => {
+        const uploadId = uuidv4();
+        const { filename, lifetime, isEncrypted, totalSize, totalChunks } = req.body;
+
+        if (isEncrypted && !uploadEnableE2EE) {
+            log('debug', 'Rejected an E2EE upload attempt because upload E2EE is disabled on the server.');
+            return res.status(400).json({ error: 'End-to-end encryption is not supported on this server.' });
         }
-    }
 
-    // Check Storage Quota
-    // Calculate reserved space from active uploads
-    let reservedSpace = 0;
-    ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
-
-    if ((currentDiskUsage + reservedSpace + size) > MAX_STORAGE_BYTES) {
-        log('warn', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB, Reserved: ${(reservedSpace / 1024 / 1024 / 1024).toFixed(2)} GB, Requested: ${(size / 1024 / 1024 / 1024).toFixed(2)} GB.`);
-        return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
-    }
-
-    // Validate filename if not encrypted
-    if (!isEncrypted) {
-        if (filename.length > 255 || /[\/\\]/.test(filename)) {
-            return res.status(400).json({ error: 'Invalid filename. Contains illegal characters or is too long.' });
+        // Validate filename
+        if (typeof filename !== 'string' || filename.trim().length === 0) {
+            return res.status(400).json({ error: 'Invalid filename. Must be a non-empty string.' });
         }
-    }
 
-    const tempFilePath = path.join(tmpDir, uploadId);
-    fs.writeFileSync(tempFilePath, '');
+        // Validate isEncrypted (must be a boolean)
+        if (typeof isEncrypted !== 'boolean') {
+            return res.status(400).json({ error: 'Invalid isEncrypted. Must be a boolean.' });
+        }
 
-    ongoingUploads.set(uploadId, {
-        filename,
-        isEncrypted,
-        lifetime: Number(lifetime) || 0,
-        tempFilePath,
-        totalSize: size, // Expected final size
-        totalChunks: chunks, // Expected chunk count
-        receivedChunks: new Set(),
-        reservedBytes: size, // Amount to reserve
-        expiresAt: Date.now() + (2 * 60 * 1000) // 2 minute initial deadline
+        // Validate file lifetime
+        if (typeof lifetime !== 'number' || !Number.isInteger(lifetime) || lifetime < 0) {
+            return res.status(400).json({ error: 'Invalid lifetime. Must be a non-negative integer (milliseconds).' });
+        }
+
+        // Validate Reservation Data
+        const size = parseInt(totalSize);
+        const chunks = parseInt(totalChunks);
+        if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) return res.status(400).json({ error: 'Invalid total size. Must be a positive integer.' });
+        if (typeof chunks !== 'number' || !Number.isInteger(chunks) || chunks <= 0) return res.status(400).json({ error: 'Invalid chunk count. Must be a positive integer.' });
+
+        // Check File Limit
+        if (size > MAX_FILE_SIZE_BYTES) {
+            return res.status(413).json({ error: `File exceeds limit of ${maxFileSizeMB} MB.` });
+        }
+
+        // Validate lifetime against max
+        if (MAX_FILE_LIFETIME_MS !== Infinity) {
+            if (lifetime === 0) {
+                return res.status(400).json({ error: `Server does not allow unlimited file lifetime. Max: ${maxFileLifetimeHours} hours.` });
+            }
+            if (lifetime > MAX_FILE_LIFETIME_MS) {
+                return res.status(400).json({ error: `File lifetime exceeds limit of ${maxFileLifetimeHours} hours.` });
+            }
+        }
+
+        // Check Storage Quota
+        // Calculate reserved space from active uploads
+        let reservedSpace = 0;
+        ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
+
+        if ((currentDiskUsage + reservedSpace + size) > MAX_STORAGE_BYTES) {
+            log('debug', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB, Reserved: ${(reservedSpace / 1000 / 1000 / 1000).toFixed(2)} GB, Requested: ${(size / 1000 / 1000 / 1000).toFixed(2)} GB.`);
+            return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
+        }
+
+        // Validate filename if not encrypted
+        if (!isEncrypted) {
+            if (filename.length > 255 || /[\/\\]/.test(filename)) {
+                return res.status(400).json({ error: 'Invalid filename. Contains illegal characters or is too long.' });
+            }
+        }
+
+        const tempFilePath = path.join(tmpDir, uploadId);
+        fs.writeFileSync(tempFilePath, '');
+
+        ongoingUploads.set(uploadId, {
+            filename,
+            isEncrypted,
+            lifetime: Number(lifetime) || 0,
+            tempFilePath,
+            totalSize: size, // Expected final size
+            totalChunks: chunks, // Expected chunk count
+            receivedChunks: new Set(),
+            reservedBytes: size, // Amount to reserve
+            expiresAt: Date.now() + (2 * 60 * 1000) // 2 minute initial deadline
+        });
+
+        log('debug', `Initialised upload. Reserved ${(size / 1000 / 1000).toFixed(2)} MB.`);
+        res.status(200).json({ uploadId });
     });
 
-    log('info', `Initialised upload. Reserved ${(size / 1024 / 1024).toFixed(2)} MB.`);
-    res.status(200).json({ uploadId });
-});
+    uploadRouter.post('/chunk', uploadAuth, (req, res) => {
+        const uploadId = req.headers['x-upload-id'];
+        let chunkIndex = req.headers['x-chunk-index'];
+        const clientHash = req.headers['x-chunk-hash'];
 
-app.post('/upload/chunk', uploadAuth, (req, res) => {
-    const uploadId = req.headers['x-upload-id'];
-    let chunkIndex = req.headers['x-chunk-index'];
-    const clientHash = req.headers['x-chunk-hash'];
+        if (!ongoingUploads.has(uploadId)) return res.status(410).send('Upload session expired or invalid.');
+        const session = ongoingUploads.get(uploadId);
 
-    if (!ongoingUploads.has(uploadId)) return res.status(410).send('Upload session expired or invalid.');
-    const session = ongoingUploads.get(uploadId);
+        // Validate Index
+        if (isNaN(chunkIndex) || chunkIndex < 0 || chunkIndex >= session.totalChunks) {
+            return res.status(400).send('Invalid chunk index.');
+        }
 
-    // Validate Index
-    if (isNaN(chunkIndex) || chunkIndex < 0 || chunkIndex >= session.totalChunks) {
-        return res.status(400).send('Invalid chunk index.');
-    }
+        chunkIndex = parseInt(chunkIndex);
 
-    chunkIndex = parseInt(chunkIndex);
+        // Validate Hash
+        if (typeof clientHash !== 'string' || !/^[a-f0-9]{64}$/.test(clientHash)) { // SHA-256 hash format
+            return res.status(400).send('Invalid chunk hash.');
+        }
 
-    // Validate Hash
-    if (typeof clientHash !== 'string' || !/^[a-f0-9]{64}$/.test(clientHash)) { // SHA-256 hash format
-        return res.status(400).send('Invalid chunk hash.');
-    }
+        if (session.receivedChunks.has(chunkIndex)) return res.status(200).send('Chunk already received.');
 
-    if (session.receivedChunks.has(chunkIndex)) return res.status(200).send('Chunk already received.');
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => {
+            const buffer = Buffer.concat(chunks);
+            log('debug', `Received chunk ${chunkIndex + 1}/${session.totalChunks}. Size: ${(buffer.length / 1000).toFixed(2)} KB`);
 
-    const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        log('info', `Received chunk ${chunkIndex + 1}/${session.totalChunks} for: ${uploadId}. Size: ${(buffer.length / 1024).toFixed(2)} KB`);
+            // 1. Verify Size (5MB + Overhead limit)
+            if (buffer.length > (5 * 1024 * 1024) + 1024) return res.status(413).send('Chunk too large.');
 
-        // 1. Verify Size (5MB + Overhead limit)
-        if (buffer.length > (5 * 1024 * 1024) + 1024) return res.status(413).send('Chunk too large.');
+            // 2. Verify Integrity
+            const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
+            if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
 
-        // 2. Verify Integrity
-        const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
-        if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
+            // Calculate Offset
+            // If encrypted, every chunk (except last) is 5MB + 28 bytes. If plain, 5MB.
+            const CHUNK_BASE = 5 * 1024 * 1024;
+            const OVERHEAD = session.isEncrypted ? 28 : 0;
+            const OFFSET = chunkIndex * (CHUNK_BASE + OVERHEAD);
 
-        // Calculate Offset
-        // If encrypted, every chunk (except last) is 5MB + 28 bytes. If plain, 5MB.
-        const CHUNK_BASE = 5 * 1024 * 1024;
-        const OVERHEAD = session.isEncrypted ? 28 : 0;
-        const OFFSET = chunkIndex * (CHUNK_BASE + OVERHEAD);
+            // Write
+            fs.open(session.tempFilePath, 'r+', (err, fd) => {
+                if (err) return res.status(500).send('File IO error.');
+                fs.write(fd, buffer, 0, buffer.length, OFFSET, (writeErr) => {
+                    fs.close(fd, () => { });
+                    if (writeErr) return res.status(500).send('Write failed.');
 
-        // Write
-        fs.open(session.tempFilePath, 'r+', (err, fd) => {
-            if (err) return res.status(500).send('File IO error.');
-            fs.write(fd, buffer, 0, buffer.length, OFFSET, (writeErr) => {
-                fs.close(fd, () => { });
-                if (writeErr) return res.status(500).send('Write failed.');
-
-                session.receivedChunks.add(chunkIndex);
-                session.expiresAt = Date.now() + (2 * 60 * 1000); // Reset timeout to 2 mins
-                res.status(200).send('Chunk received.');
+                    session.receivedChunks.add(chunkIndex);
+                    session.expiresAt = Date.now() + (2 * 60 * 1000); // Reset timeout to 2 mins
+                    res.status(200).send('Chunk received.');
+                });
             });
         });
     });
-});
 
-app.post('/upload/complete', uploadAuth, (req, res) => {
-    const { uploadId } = req.body;
-    if (!ongoingUploads.has(uploadId)) return res.status(400).json({ error: 'Invalid upload ID.' });
+    uploadRouter.post('/complete', uploadAuth, (req, res) => {
+        const { uploadId } = req.body;
+        if (!ongoingUploads.has(uploadId)) return res.status(400).json({ error: 'Invalid upload ID.' });
 
-    const session = ongoingUploads.get(uploadId);
+        const session = ongoingUploads.get(uploadId);
 
-    // 1. Verify Chunk Count
-    // We expect exactly N unique chunks.
-    if (session.receivedChunks.size !== session.totalChunks) {
-        log('warn', `Upload ${uploadId} incomplete: ${session.receivedChunks.size}/${session.totalChunks} chunks.`);
+        // 1. Verify Chunk Count
+        // We expect exactly N unique chunks.
+        if (session.receivedChunks.size !== session.totalChunks) {
+            log('debug', `Upload incomplete: ${session.receivedChunks.size}/${session.totalChunks} chunks.`);
 
-        return res.status(400).json({
-            error: `Upload incomplete. Server received ${session.receivedChunks.size} of ${session.totalChunks} chunks.`
-        });
-    }
-
-    const uploadInfo = ongoingUploads.get(uploadId);
-    const fileId = uuidv4();
-    const finalPath = path.join(uploadDir, fileId);
-
-    try {
-        const stats = fs.statSync(uploadInfo.tempFilePath);
-        if (stats.size === 0) {
-            log('warn', `Rejected 0-byte file upload for ID: ${uploadId}`);
-            fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the empty temp file
-            ongoingUploads.delete(uploadId);
-            return res.status(400).json({ error: 'Empty files (0 bytes) cannot be uploaded.' });
-        } else if (stats.size !== uploadInfo.totalSize) {
-            log('warn', `Upload size mismatch for ID: ${uploadId}. Expected: ${uploadInfo.totalSize}, Actual: ${stats.size}`);
-            fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the invalid temp file
-            ongoingUploads.delete(uploadId);
-            return res.status(400).json({ error: 'Uploaded rejected. File size does not match expected size.' });
+            return res.status(400).json({
+                error: `Upload incomplete. Server received ${session.receivedChunks.size} of ${session.totalChunks} chunks.`
+            });
         }
-    } catch (e) {
-        log('error', `Could not stat temp file for size check: ${e.message}`);
-        ongoingUploads.delete(uploadId);
-        fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Attempt to clean up
-        return res.status(500).json({ error: 'Server error during file validation.' });
-    }
 
-    fs.renameSync(uploadInfo.tempFilePath, finalPath);
+        const uploadInfo = ongoingUploads.get(uploadId);
+        const fileId = uuidv4();
+        const finalPath = path.join(uploadDir, fileId);
 
-    const stats = fs.statSync(finalPath); // Get final size
-    currentDiskUsage += stats.size; // Update global usage
+        try {
+            const stats = fs.statSync(uploadInfo.tempFilePath);
+            if (stats.size === 0) {
+                log('debug', 'Rejected 0-byte file upload.');
+                fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the empty temp file
+                ongoingUploads.delete(uploadId);
+                return res.status(400).json({ error: 'Empty files (0 bytes) cannot be uploaded.' });
+            } else if (stats.size !== uploadInfo.totalSize) {
+                log('debug', `Upload size mismatch. Expected: ${uploadInfo.totalSize}, Actual: ${stats.size}`);
+                fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the invalid temp file
+                ongoingUploads.delete(uploadId);
+                return res.status(400).json({ error: 'Uploaded rejected. File size does not match expected size.' });
+            }
+        } catch (e) {
+            log('error', `Could not stat temp file for size check: ${e.message}`);
+            ongoingUploads.delete(uploadId);
+            fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Attempt to clean up
+            return res.status(500).json({ error: 'Server error during file validation.' });
+        }
 
-    const expiresAt = uploadInfo.lifetime > 0 ? Date.now() + uploadInfo.lifetime : null;
+        fs.renameSync(uploadInfo.tempFilePath, finalPath);
 
-    fileDatabase.set(fileId, {
-        name: uploadInfo.filename,
-        path: finalPath,
-        expiresAt: expiresAt,
-        isEncrypted: uploadInfo.isEncrypted,
+        const stats = fs.statSync(finalPath); // Get final size
+        currentDiskUsage += stats.size; // Update global usage
+
+        const expiresAt = uploadInfo.lifetime > 0 ? Date.now() + uploadInfo.lifetime : null;
+
+        fileDatabase.set(fileId, {
+            name: uploadInfo.filename,
+            path: finalPath,
+            expiresAt: expiresAt,
+            isEncrypted: uploadInfo.isEncrypted,
+        });
+
+        ongoingUploads.delete(uploadId); // Remove the reservation
+        log('debug', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
+        res.status(200).json({ id: fileId });
     });
 
-    ongoingUploads.delete(uploadId); // Remove the reservation
-    log('info', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
-    res.status(200).json({ id: fileId });
-});
+    apiRouter.get('/file/:fileId/meta', limiter, (req, res) => {
+        const fileId = req.params.fileId;
+        const fileInfo = fileDatabase.get(fileId);
 
-app.get('/:fileId', limiter, (req, res) => {
-    const sendHTML = (htmlFilePath, status) => {
-        const nonce = res.locals.nonce;
-        return fs.readFile(htmlFilePath, 'utf8', (err, data) => {
-            if (err) {
-                log('error', `Failed to read ${path.basename(htmlFilePath)}: ${err.message}`);
-                return res.status(500).send('Server error');
-            }
-            const modifiedHtml = data.replace(/%%NONCE%%/g, nonce);
-            res.status(status).setHeader('Content-Type', 'text/html').send(modifiedHtml);
-        });
-    };
-
-    const fileId = req.params.fileId;
-    const fileInfo = fileDatabase.get(fileId);
-
-    if (!fileInfo) return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
-
-    if (fileInfo.isEncrypted) {
-        if (!enableE2EE) {
-            log('warn', `Blocked access to an encrypted file because E2EE is disabled.`);
-            return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+        if (!fileInfo) {
+            return res.status(404).json({ error: 'File not found.' });
         }
 
-        // The Web Crypto API requires a secure context (HTTPS).
-        // If we are behind a reverse proxy, check if the original request was secure.
-        if (req.protocol !== 'https') {
-            log('warn', `Blocked access to an encrypted file over an insecure connection (HTTP).`);
-            return sendHTML(path.join(__dirname, 'public', 'insecure.html'), 400);
+        if (fileInfo.isEncrypted && !uploadEnableE2EE) {
+            return res.status(404).json({ error: 'File not found.' });
         }
 
-        return sendHTML(path.join(__dirname, 'public', 'decryptor.html'), 200);
-    } else {
-        res.setHeader('Content-Disposition', contentDisposition(fileInfo.name));
-        res.setHeader('Content-Type', 'application/octet-stream');
+        let fileSize = 0;
+        try {
+            fileSize = fs.statSync(fileInfo.path).size;
+        } catch (error) {
+            return res.status(404).json({ error: 'File not found.' });
+        }
 
+        const payload = {
+            sizeBytes: fileSize,
+            isEncrypted: fileInfo.isEncrypted
+        };
+
+        if (fileInfo.isEncrypted) {
+            payload.encryptedFilename = fileInfo.name;
+        } else {
+            payload.filename = fileInfo.name;
+        }
+
+        res.status(200).json(payload);
+    });
+
+    apiRouter.get('/file/:fileId', limiter, (req, res) => {
+        const fileId = req.params.fileId;
+        const fileInfo = fileDatabase.get(fileId);
+
+        if (!fileInfo) {
+            return res.status(404).json({ error: 'File not found.' });
+        }
+
+        if (fileInfo.isEncrypted && !uploadEnableE2EE) {
+            return res.status(404).json({ error: 'File not found.' });
+        }
+
+        // Capture size before streaming
         const fileSize = fs.statSync(fileInfo.path).size;
         res.setHeader('Content-Length', fileSize);
 
+        if (!fileInfo.isEncrypted) {
+            res.setHeader('Content-Disposition', contentDisposition(fileInfo.name));
+            res.setHeader('Content-Type', 'application/octet-stream');
+        }
+
         const readStream = fs.createReadStream(fileInfo.path);
         readStream.pipe(res);
+
         readStream.on('close', () => {
+            // Update storage immediately
             currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
+
             fs.rm(fileInfo.path, { force: true }, () => { });
             fileDatabase.delete(fileId);
-            log('info', `[Simple] File downloaded and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
+            log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
         });
-    }
-});
-
-app.get('/api/file/:fileId/meta', limiter, (req, res) => {
-    const fileId = req.params.fileId;
-    const fileInfo = fileDatabase.get(fileId);
-
-    if (!fileInfo || !fileInfo.isEncrypted) {
-        return res.status(404).json({ error: 'File not found.' });
-    }
-    res.status(200).json({ encryptedFilename: fileInfo.name });
-});
-
-app.get('/api/file/:fileId', limiter, (req, res) => {
-    const fileId = req.params.fileId;
-    const fileInfo = fileDatabase.get(fileId);
-
-    if (!fileInfo || !fileInfo.isEncrypted) {
-        return res.status(404).json({ error: 'File not found.' });
-    }
-
-    // Capture size before streaming
-    const fileSize = fs.statSync(fileInfo.path).size;
-    res.setHeader('Content-Length', fileSize);
-
-    const readStream = fs.createReadStream(fileInfo.path);
-    readStream.pipe(res);
-
-    readStream.on('close', () => {
-        // Update storage immediately
-        currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
-
-        fs.rm(fileInfo.path, { force: true }, () => { });
-        fileDatabase.delete(fileId);
-        log('info', `[Encrypted] File data sent and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
     });
-});
+}
 
-app.get('/api/info', limiter, (req, res) => {
+apiRouter.get('/info', limiter, (req, res) => {
+    const uploadCapabilities = {
+        enabled: enableUpload,
+        maxSizeMB: enableUpload ? maxFileSizeMB : undefined,
+        maxLifetimeHours: enableUpload ? maxFileLifetimeHours : undefined,
+        e2ee: enableUpload ? uploadEnableE2EE : undefined,
+    };
+
+    const p2pCapabilities = {
+        enabled: enableP2P,
+        peerjsPath: enableP2P ? PEERJS_MOUNT_PATH : undefined,
+        iceServers: enableP2P ? p2pIceServers : undefined,
+        peerjsDebugLogging: enableP2P ? (process.env.PEERJS_DEBUG === 'true') : undefined,
+    };
+
     res.status(200).json({
         name: serverName,
         version: version,
+        logLevel: LOG_LEVEL,
         capabilities: {
-            upload: {
-                maxSizeMB: maxFileSizeMB,
-                maxLifetimeHours: maxFileLifetimeHours,
-                e2ee: enableE2EE
-            },
-            // p2p: {
-            //     // coming soon
-            // },
-            // webUI: {
-            //     // coming soon
-            // }
+            upload: uploadCapabilities,
+            p2p: p2pCapabilities,
+            webUI: {
+                enabled: enableWebUI
+            }
         }
     });
 });
 
-app.get('/', limiter, (req, res) => {
-    res.send("Shadownloader Server is running.");
+apiRouter.post('/resolve', limiter, (req, res) => {
+    const raw = String(req.body?.value || '').trim();
+    if (!raw) {
+        return res.status(400).json({ valid: false, error: 'Missing sharing code.' });
+    }
+
+    const isUrl = /^https?:\/\//i.test(raw);
+    const isUuid = (value) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
+    const isP2PCode = (value) => /^[A-Z]{4}-\d{4}$/.test(value);
+    const normalizeP2P = (value) => value.replace(/\s+/g, '').toUpperCase();
+
+    if (isUrl) {
+        try {
+            const url = new URL(raw);
+            const origin = `${req.protocol}://${req.get('host')}`;
+            if (url.origin !== origin) {
+                return res.status(200).json({ valid: true, type: 'external', target: url.toString() });
+            }
+
+            const path = decodeURIComponent(url.pathname || '');
+            if (path.startsWith('/p2p/')) {
+                const code = normalizeP2P(path.replace('/p2p/', ''));
+                if (!enableP2P) {
+                    return res.status(200).json({ valid: false, reason: 'Direct transfer is disabled on this server.' });
+                }
+                if (!isP2PCode(code)) {
+                    return res.status(200).json({ valid: false, reason: 'Invalid direct transfer code.' });
+                }
+                return res.status(200).json({ valid: true, type: 'p2p', target: `/p2p/${encodeURIComponent(code)}` });
+            }
+
+            if (path.startsWith('/')) {
+                const fileId = path.slice(1);
+                if (isUuid(fileId)) {
+                    const fileInfo = fileDatabase.get(fileId);
+                    if (!fileInfo) {
+                        return res.status(200).json({ valid: false, reason: 'File not found.' });
+                    }
+                    return res.status(200).json({ valid: true, type: 'file', target: `/${fileId}` });
+                }
+            }
+
+            return res.status(200).json({ valid: false, reason: 'Unrecognised sharing link.' });
+        } catch {
+            return res.status(200).json({ valid: false, reason: 'Invalid URL.' });
+        }
+    }
+
+    const compact = raw.replace(/\s+/g, '');
+    if (isUuid(compact)) {
+        const fileInfo = fileDatabase.get(compact);
+        if (!fileInfo) {
+            return res.status(200).json({ valid: false, reason: 'File not found.' });
+        }
+        return res.status(200).json({ valid: true, type: 'file', target: `/${compact}` });
+    }
+
+    const p2pCode = normalizeP2P(compact);
+    if (isP2PCode(p2pCode)) {
+        if (!enableP2P) {
+            return res.status(200).json({ valid: false, reason: 'Direct transfer is disabled on this server.' });
+        }
+        return res.status(200).json({ valid: true, type: 'p2p', target: `/p2p/${encodeURIComponent(p2pCode)}` });
+    }
+
+    return res.status(200).json({ valid: false, reason: 'Unrecognised sharing code.' });
 });
 
-const cleanupExpiredFiles = () => {
-    const now = Date.now();
-    const allFiles = preserveUploads ? fileDatabase.getAll() : Array.from(fileDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
-    for (const record of allFiles) {
-        if (record.value?.expiresAt && record.value.expiresAt < now) {
-            log('info', `File expired. Deleting...`);
-            try {
-                const stats = fs.statSync(record.value.path);
-                currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
-                fs.rmSync(record.value.path, { force: true });
-            } catch (e) { }
-            fileDatabase.delete(record.key);
-        }
-    }
-};
+app.use('/api', apiRouter);
 
-const cleanupZombieUploads = () => {
-    const now = Date.now();
-    for (const [id, session] of ongoingUploads.entries()) {
-        if (now > session.expiresAt) {
-            log('info', `Cleaning zombie upload: ${id}`);
-            try {
-                fs.rmSync(session.tempFilePath, { force: true });
-            } catch (e) { }
-            ongoingUploads.delete(id); // Removes reservation automatically
-        }
-    }
-};
-
-setInterval(cleanupExpiredFiles, 60000);
-
-const zombieCleanupIntervalMs = process.env.ZOMBIE_CLEANUP_INTERVAL_MS ? process.env.ZOMBIE_CLEANUP_INTERVAL_MS : 300000;
-if (isNaN(zombieCleanupIntervalMs) || zombieCleanupIntervalMs < 0 || !Number.isInteger(Number(zombieCleanupIntervalMs))) {
-    log('error', 'Invalid ZOMBIE_CLEANUP_INTERVAL_MS environment variable. It must be a non-negative integer.');
-    process.exit(1);
+// ===== PeerJS signalling server (PeerServer) =====
+// Mounted at a fixed path: /peerjs
+if (enableP2P) {
+    const peerServer = ExpressPeerServer(server, {
+        path: '/',
+        debug: process.env.PEERJS_DEBUG === 'true',
+        proxied: true,
+    });
+    app.use(PEERJS_MOUNT_PATH, peerServer);
+    log('info', `PeerServer mounted at ${PEERJS_MOUNT_PATH}`);
 }
 
-if (Number(zombieCleanupIntervalMs) > 0) {
-    setInterval(cleanupZombieUploads, Number(zombieCleanupIntervalMs));
-    log('info', `ZOMBIE_CLEANUP_INTERVAL_MS: ${zombieCleanupIntervalMs} ms`);
-} else {
-    log('warn', 'ZOMBIE_CLEANUP_INTERVAL_MS is set to 0! Zombie upload cleanup is disabled.');
+// P2P receiver page
+app.get('/p2p/:code', limiter, (req, res) => {
+    if (!enableP2P) return res.status(404).render('pages/404', { serverName });
+    return res.status(200).render('pages/download-p2p', { code: req.params.code, serverName });
+});
+
+// Web UI landing page
+app.get('/', limiter, (req, res) => {
+    if (!enableWebUI) return res.status(200).send('Dropgate Server is running. Web UI is disabled.');
+    return res.status(200).render('pages/index', { serverName });
+});
+
+// Standard download page
+if (enableUpload) {
+    app.use('/upload', uploadRouter);
+
+    app.get(`/:fileId`, limiter, (req, res) => {
+        const fileId = req.params.fileId;
+        const fileInfo = fileDatabase.get(fileId);
+
+        if (!fileInfo) return res.status(404).render('pages/404', { serverName });
+
+        if (fileInfo.isEncrypted) {
+            if (!uploadEnableE2EE) {
+                log('debug', 'Blocked access to an encrypted file because upload E2EE is disabled.');
+                return res.status(404).render('pages/404', { serverName });
+            }
+
+            // The Web Crypto API requires a secure context (HTTPS).
+            if (req.protocol !== 'https') {
+                log('debug', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
+                return res.status(400).render('pages/insecure', { serverName });
+            }
+        }
+
+        return res.status(200).render('pages/download-standard', { serverName, fileId });
+    });
 }
 
-app.listen(port, () => {
-    log('info', `Shadownloader Server v${version} is running. | Port: ${port} (HTTP)`);
+// 404 fallback
+app.use((_req, res) => res.status(404).render('pages/404', { serverName }));
+
+if (enableUpload) {
+    const cleanupExpiredFiles = () => {
+        const now = Date.now();
+        const allFiles = preserveUploads ? fileDatabase.getAll() : Array.from(fileDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
+        for (const record of allFiles) {
+            if (record.value?.expiresAt && record.value.expiresAt < now) {
+                log('debug', 'File expired. Deleting...');
+                try {
+                    const stats = fs.statSync(record.value.path);
+                    currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                    fs.rmSync(record.value.path, { force: true });
+                } catch (e) { }
+                fileDatabase.delete(record.key);
+            }
+        }
+    };
+
+    const cleanupZombieUploads = () => {
+        const now = Date.now();
+        for (const [id, session] of ongoingUploads.entries()) {
+            if (now > session.expiresAt) {
+                log('debug', 'Cleaning zombie upload.');
+                try {
+                    fs.rmSync(session.tempFilePath, { force: true });
+                } catch (e) { }
+                ongoingUploads.delete(id); // Removes reservation automatically
+            }
+        }
+    };
+
+    setInterval(cleanupExpiredFiles, 60000);
+
+    const zombieCleanupIntervalMs = process.env.UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS ? process.env.UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS : 300000;
+    if (isNaN(zombieCleanupIntervalMs) || zombieCleanupIntervalMs < 0 || !Number.isInteger(Number(zombieCleanupIntervalMs))) {
+        log('error', 'Invalid UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS environment variable. It must be a non-negative integer.');
+        process.exit(1);
+    }
+
+    if (Number(zombieCleanupIntervalMs) > 0) {
+        setInterval(cleanupZombieUploads, Number(zombieCleanupIntervalMs));
+        log('info', `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS: ${zombieCleanupIntervalMs} ms`);
+    } else {
+        log('warn', 'UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS is set to 0! Zombie upload cleanup is disabled.');
+    }
+}
+
+server.listen(port, () => {
+    log('info', `Dropgate Server v${version} is running. | Port: ${port}`);
 });
 
 const handleShutdown = () => {
-    log('info', 'Shadownloader Server is shutting down...');
-    if (!preserveUploads) {
+    log('info', 'Dropgate Server is shutting down...');
+    if (enableUpload && !preserveUploads) {
         log('info', 'Clearing uploads and temp files upon shutdown...');
         cleanupDir(tmpDir);
         cleanupDir(uploadDir);
         log('info', 'Cleanup complete.');
     }
-    process.exit(0);
+    // Gracefully stop accepting new connections.
+    try {
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 1500).unref();
+    } catch {
+        process.exit(0);
+    }
 };
 
 process.on('SIGINT', handleShutdown);
