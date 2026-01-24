@@ -15,6 +15,7 @@ const code = document.body.dataset.code;
 let total = 0;
 let received = 0;
 let transferCompleted = false;
+let writer = null;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -51,8 +52,29 @@ const showError = (title, message) => {
 
 async function loadServerInfo() {
   const client = new DropgateClient({ clientVersion: '0.0.0' });
-  const { serverInfo } = await client.getServerInfo(location.origin, { timeoutMs: 5000 });
+  const { serverInfo } = await client.getServerInfo({
+    host: location.hostname,
+    port: location.port ? Number(location.port) : undefined,
+    secure: location.protocol === 'https:',
+    timeoutMs: 5000,
+  });
   return serverInfo;
+}
+
+async function loadPeerJS() {
+  if (globalThis.Peer) return globalThis.Peer;
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/vendor/peerjs.min.js';
+    script.async = true;
+    script.onload = () => {
+      if (globalThis.Peer) resolve(globalThis.Peer);
+      else reject(new Error('PeerJS failed to initialize'));
+    };
+    script.onerror = () => reject(new Error('Failed to load PeerJS'));
+    document.head.appendChild(script);
+  });
 }
 
 async function start() {
@@ -61,7 +83,7 @@ async function start() {
     return;
   }
 
-  if (!isSecureContextForP2P()) {
+  if (!isSecureContextForP2P(location.hostname, window.isSecureContext)) {
     showError('Secure connection required', 'P2P transfers require HTTPS in most browsers.');
     return;
   }
@@ -82,12 +104,26 @@ async function start() {
     return;
   }
 
+  // Load PeerJS
+  let Peer;
+  try {
+    Peer = await loadPeerJS();
+  } catch (err) {
+    console.error(err);
+    showError('Failed to load', 'Could not load the P2P library.');
+    return;
+  }
+
   const peerjsPath = p2p.peerjsPath || '/peerjs';
   const iceServers = Array.isArray(p2p.iceServers) ? p2p.iceServers : [];
 
   try {
     await startP2PReceive({
       code,
+      Peer,
+      host: location.hostname,
+      port: location.port ? Number(location.port) : undefined,
+      secure: location.protocol === 'https:',
       serverInfo: info,
       peerjsPath,
       iceServers,
@@ -103,14 +139,40 @@ async function start() {
         elTitle.textContent = 'Receiving...';
         elMsg.textContent = 'Keep this tab open until the transfer completes.';
         setProgress();
+
+        // Create streamSaver write stream
+        if (window.streamSaver?.createWriteStream) {
+          const stream = window.streamSaver.createWriteStream(name, total ? { size: total } : undefined);
+          writer = stream.getWriter();
+        }
       },
-      onProgress: ({ received: nextReceived, total: nextTotal }) => {
-        received = nextReceived;
-        total = nextTotal;
+      onData: async (chunk) => {
+        // Write chunk to file via streamSaver
+        if (writer) {
+          await writer.write(chunk);
+        }
+        received += chunk.byteLength;
         setProgress();
       },
-      onComplete: () => {
+      onProgress: ({ received: nextReceived, total: nextTotal }) => {
+        // Progress is also tracked via onData, but update from sender feedback too
+        if (nextReceived > received) received = nextReceived;
+        if (nextTotal > 0) total = nextTotal;
+        setProgress();
+      },
+      onComplete: async () => {
         transferCompleted = true;
+
+        // Close the writer
+        if (writer) {
+          try {
+            await writer.close();
+          } catch (err) {
+            console.error('Error closing writer:', err);
+          }
+          writer = null;
+        }
+
         const card = document.getElementById('status-card');
         const iconContainer = document.getElementById('icon-container');
         elTitle.textContent = 'Transfer Complete';
@@ -126,7 +188,18 @@ async function start() {
       onError: (err) => {
         if (transferCompleted) return;
         console.error(err);
-        if (err?.message.startsWith('Could not connect to peer')) {
+
+        // Abort the writer on error
+        if (writer) {
+          try {
+            writer.abort();
+          } catch {
+            // Ignore abort errors
+          }
+          writer = null;
+        }
+
+        if (err?.message?.startsWith('Could not connect to peer')) {
           showError('Connection Failed', 'Could not connect to the sender. Check the code, ensure the sender is online, and try again.');
           return;
         }
@@ -134,6 +207,17 @@ async function start() {
       },
       onDisconnect: () => {
         if (transferCompleted) return;
+
+        // Abort the writer on disconnect
+        if (writer) {
+          try {
+            writer.abort();
+          } catch {
+            // Ignore abort errors
+          }
+          writer = null;
+        }
+
         showError('Disconnected', 'The sender disconnected before the transfer finished.');
       },
     });

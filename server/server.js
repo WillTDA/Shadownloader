@@ -264,13 +264,10 @@ const serveVendorFile = (filePath, contentType) => (req, res) => {
     }
 };
 
-// Self-host the PeerJS client if installed.
-// We keep the browser path stable so the Web UI can lazy-load it.
-app.get('/vendor/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
-
-// Self-host bootstrap CSS/JS from node_modules
+// Vendor files
 app.get('/vendor/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
 app.get('/vendor/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
 app.get('/vendor/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
 
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;

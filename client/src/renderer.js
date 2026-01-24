@@ -1,4 +1,4 @@
-import { DropgateClient, lifetimeToMs } from './dropgate-core.js';
+import { DropgateClient, lifetimeToMs, parseServerUrl } from './dropgate-core.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -156,11 +156,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             connectionStatus.className = 'form-text mt-1 text-muted';
 
             try {
-                const { cleanUrl } = await coreClient.getServerInfo(serverUrl, { timeoutMs: 5000 });
+                const serverTarget = parseServerUrl(serverUrl);
+                await coreClient.getServerInfo({ ...serverTarget, timeoutMs: 5000 });
 
-                const schemeOk = cleanUrl.startsWith('https://');
-
-                if (schemeOk) {
+                if (serverTarget.secure) {
                     connectionStatus.textContent = `Connection successful (HTTPS).`;
                     connectionStatus.className = 'form-text mt-1 text-success';
                 } else {
@@ -346,8 +345,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveSettings();
 
             try {
+                const serverTarget = parseServerUrl(serverUrlInput.value.trim());
                 const result = await coreClient.uploadFile({
-                    serverUrl: serverUrlInput.value.trim(),
+                    ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
                     encrypt: useEncryption,
@@ -398,7 +398,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             try {
-                const { serverInfo } = await coreClient.getServerInfo(inputUrl, { timeoutMs: 5000 });
+                const serverTarget = parseServerUrl(inputUrl);
+                const { serverInfo } = await coreClient.getServerInfo({ ...serverTarget, timeoutMs: 5000 });
 
                 if (!serverInfo || !serverInfo?.version || !serverInfo?.capabilities) {
                     const message = 'Error: Cannot determine server version or capabilities.';

@@ -12,6 +12,9 @@
 ![version](https://img.shields.io/badge/version-2.0.0-brightgreen?style=flat-square)
 ![docker](https://img.shields.io/badge/docker-supported-blue?style=flat-square)
 
+[![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
+[![buy me a coffee](https://img.shields.io/badge/-Buy%20Me%20a%20Coffee-ffdd00?logo=Buy%20Me%20A%20Coffee&logoColor=000000&style=flat-square)](https://www.buymeacoffee.com/willtda)
+
 </div>
 
 ## 🌐 Public Demo
