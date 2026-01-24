@@ -1,3 +1,7 @@
+process.env.ENABLE_UPLOAD = process.env.ENABLE_UPLOAD || 'true';
+process.env.UPLOAD_MAX_FILE_SIZE_MB = process.env.UPLOAD_MAX_FILE_SIZE_MB || '10000';
+process.env.UPLOAD_MAX_STORAGE_GB = process.env.UPLOAD_MAX_STORAGE_GB || '100';
+
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
     const upper = String(value || '').trim().toUpperCase();
@@ -241,9 +245,9 @@ app.use(
                 'script-src': ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
                 'style-src': ["'self'", "'unsafe-inline'"],
                 'connect-src': ["'self'", 'ws:', 'wss:'],
-                'frame-src': ["'self'", 'https://jimmywarting.github.io'], // For streamSaver
+                'frame-src': ["'self'"],
                 'worker-src': ["'self'", 'blob:'],
-                'child-src': ["'self'", 'blob:', 'https://jimmywarting.github.io'],
+                'child-src': ["'self'", 'blob:'],
             },
         },
     })
@@ -265,10 +269,13 @@ const serveVendorFile = (filePath, contentType) => (req, res) => {
 };
 
 // Vendor files
-app.get('/vendor/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
-app.get('/vendor/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
-app.get('/vendor/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
-app.get('/vendor/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/bootstrap/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
+app.get('/vendor/bootstrap/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/streamsaver/streamsaver.js', serveVendorFile('streamsaver/StreamSaver.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/streamsaver/mitm.html', (req, res) => res.render('pages/mitm'));
+app.get('/vendor/streamsaver/sw.js', serveVendorFile('streamsaver/sw.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/peerjs/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/qr-code-styling/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
 
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;
 const rateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS ? process.env.RATE_LIMIT_MAX_REQUESTS : 25;

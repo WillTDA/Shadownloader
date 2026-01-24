@@ -13,14 +13,17 @@
   <link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
   <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon">
   <link rel="manifest" href="/manifest.json" />
-  <title><%= serverName %></title>
+  <title>
+    <%= serverName %>
+  </title>
 
-  <link href="/vendor/bootstrap.min.css" rel="stylesheet">
+  <link href="/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
   <link href="/assets/material-icons-round.css" rel="stylesheet">
   <link rel="stylesheet" href="/css/bootstrap-base.css" />
   <link rel="stylesheet" href="/css/download.css" />
 
-  <script src="/assets/streamsaver.min.js"></script>
+  <script src="/vendor/streamsaver/streamsaver.js"></script>
+  <script nonce="<%= nonce %>">streamSaver.mitm = '/vendor/streamsaver/mitm.html';</script>
   <script src="/js/theme.js" defer></script>
   <script type="module" src="/js/page-common.js"></script>
   <script type="module" src="/js/download-standard.js"></script>
@@ -30,8 +33,8 @@
   <main>
     <div class="container-main text-center">
       <div id="title-container" class="d-flex align-items-center justify-content-center">
-        <img src="/assets/icon.png" alt="Dropgate Icon" width="34" height="34" class="me-2 align-middle"
-          loading="lazy" style="display:block;">
+        <img src="/assets/icon.png" alt="Dropgate Icon" width="34" height="34" class="me-2 align-middle" loading="lazy"
+          style="display:block;">
         <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Dropgate</h1>
       </div>
       <p class="lead mb-4">Verify your file details before starting the download.</p>

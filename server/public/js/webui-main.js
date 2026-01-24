@@ -581,7 +581,7 @@ async function loadPeerJS() {
 
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/vendor/peerjs.min.js';
+    script.src = '/vendor/peerjs/peerjs.min.js';
     script.async = true;
     script.onload = () => {
       if (globalThis.Peer) resolve(globalThis.Peer);

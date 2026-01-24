@@ -19,7 +19,7 @@
     <%= serverName %>
   </title>
 
-  <link href="/vendor/bootstrap.min.css" rel="stylesheet" />
+  <link href="/vendor/bootstrap/bootstrap.min.css" rel="stylesheet" />
   <link href="/assets/material-icons-round.css" rel="stylesheet" />
   <link rel="stylesheet" href="/css/bootstrap-base.css" />
   <link rel="stylesheet" href="/css/index.css" />
@@ -27,8 +27,8 @@
 
   <script src="/js/theme.js" defer></script>
   <script src="/js/tooltips.js" defer></script>
-  <script src="/vendor/bootstrap.min.js" defer></script>
-  <script src="/vendor/qr-code-styling.js" defer></script>
+  <script src="/vendor/bootstrap/bootstrap.min.js" defer></script>
+  <script src="/vendor/qr-code-styling/qr-code-styling.js" defer></script>
   <script type="module" src="/js/page-common.js"></script>
   <script type="module" src="/js/webui-main.js"></script>
 </head>
@@ -37,8 +37,8 @@
   <main>
     <div class="container-main">
       <div id="title-container" class="d-flex align-items-center justify-content-center">
-        <img src="/assets/icon.png" alt="Dropgate Icon" width="34" height="34" class="me-2 align-middle"
-          loading="lazy" style="display:block;">
+        <img src="/assets/icon.png" alt="Dropgate Icon" width="34" height="34" class="me-2 align-middle" loading="lazy"
+          style="display:block;">
         <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Dropgate</h1>
       </div>
       <p id="tagline" class="lead text-center mb-4">Send a file securely, or enter a sharing code to receive one.</p>
@@ -82,7 +82,8 @@
               <div class="mb-3" id="optUploadMode">
                 <div class="d-flex align-items-center justify-content-between">
                   <div class="form-label fw-semibold mb-1">Upload Mode</div>
-                  <button type="button" class="help-btn" style="background: none; border: none; cursor: help; color: var(--bs-secondary-color);"
+                  <button type="button" class="help-btn"
+                    style="background: none; border: none; cursor: help; color: var(--bs-secondary-color);"
                     data-tooltip='"Standard" will return a link to share your file. "Direct Transfer" uses peer-to-peer; you must keep this page open while sending.'
                     aria-label="Upload mode help"><span class="material-icons-round">help</span></button>
                 </div>
@@ -111,7 +112,8 @@
               <div id="optEncrypt" class="mb-3">
                 <div class="d-flex align-items-center justify-content-between">
                   <div class="form-label fw-semibold mb-1">Enable Encryption?</div>
-                  <button type="button" class="help-btn" style="background: none; border: none; cursor: help; color: var(--bs-secondary-color);"
+                  <button type="button" class="help-btn"
+                    style="background: none; border: none; cursor: help; color: var(--bs-secondary-color);"
                     data-tooltip="Strongly recommended. Protects your upload so that only the intended recipient can access its contents."
                     aria-label="Encryption help"><span class="material-icons-round">help</span></button>
                 </div>
