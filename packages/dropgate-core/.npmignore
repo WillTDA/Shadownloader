@@ -1,0 +1,31 @@
+# Source files
+src/
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+
+# Tests
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/
+
+# Development
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# Build artifacts
+node_modules/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Assets not needed in package
+dropgate.png

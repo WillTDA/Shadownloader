@@ -26,9 +26,10 @@ To prevent and monitor for abuse, `DEBUG`-level logging and strict rate limits a
 
 **Dropgate** is a modern, privacy-respecting file sharing system designed to be easy to self-host and easy to use.
 
-It ships as two parts:
+It ships as three parts:
 - [**Dropgate Client**](./client/README.md): A lightweight Electron app for uploading, encrypting, and sharing files.
 - [**Dropgate Server**](./server/README.md): A Node.js backend that hosts the API + Web UI, with optional end-to-end encryption and configurable storage.
+- [**@dropgate/core**](./packages/dropgate-core/README.md): A headless TypeScript library that powers the client and server, usable in custom projects.
 
 Dropgate supports **two ways to transfer files**:
 - **Hosted upload (classic mode)** — you upload to your server, share a link, and the server holds the file temporarily.
@@ -98,6 +99,7 @@ If you self-host, you decide how strict you want to be — from private-only to 
 
 * **Client:** GPL-3.0 License – See [`client/LICENSE`](./client/LICENSE)
 * **Server:** AGPL-3.0 License – See [`server/LICENSE`](./server/LICENSE)
+* **Core Library:** Apache-2.0 License – See [`packages/dropgate-core/LICENSE`](./packages/dropgate-core/LICENSE)
 
 
 ## 📖 Acknowledgements

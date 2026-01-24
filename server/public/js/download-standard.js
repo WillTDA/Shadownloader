@@ -1,5 +1,5 @@
 (() => {
-  const ENCRYPTED_CHUNK_OVERHEAD = 28; // IV (12) + tag (16)
+  const { DropgateClient, importKeyFromBase64, decryptFilenameFromBase64 } = DropgateCore;
 
   const statusTitle = document.getElementById('status-title');
   const statusMessage = document.getElementById('status-message');
@@ -16,6 +16,8 @@
   const card = document.getElementById('status-card');
   const trustStatement = document.getElementById('trust-statement');
   const encryptionStatement = document.getElementById('encryption-statement');
+
+  const client = new DropgateClient({ clientVersion: '2.0.0' });
 
   const downloadState = {
     fileId: null,
@@ -44,24 +46,7 @@
     return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
   }
 
-  async function importKey(keyB64) {
-    const keyBytes = Uint8Array.from(atob(keyB64), (c) => c.charCodeAt(0));
-    return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, true, ['decrypt']);
-  }
-
-  async function decryptData(encryptedChunk, key) {
-    const iv = encryptedChunk.slice(0, 12);
-    const ciphertext = encryptedChunk.slice(12);
-    return crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
-  }
-
-  async function decryptFilename(encryptedFilename, key) {
-    const dataBuffer = Uint8Array.from(atob(encryptedFilename), (c) => c.charCodeAt(0));
-    const decryptedBuffer = await decryptData(new Uint8Array(dataBuffer), key);
-    return new TextDecoder().decode(decryptedBuffer);
-  }
-
-  async function processPlainDownload(fileId, filename, expectedSizeBytes = 0) {
+  async function startDownload() {
     downloadButton.style.display = 'none';
     progressContainer.style.display = 'block';
     progressBar.style.width = '0%';
@@ -70,57 +55,62 @@
 
     card.classList.remove('border-danger', 'border-success');
     card.classList.add('border', 'border-primary');
-    iconContainer.innerHTML = '<span class="material-icons-round text-primary">download</span>';
+    iconContainer.innerHTML = downloadState.isEncrypted
+      ? '<span class="material-icons-round text-primary">shield_lock</span>'
+      : '<span class="material-icons-round text-primary">download</span>';
+
+    // For encrypted files, require secure context with streamSaver
+    if (downloadState.isEncrypted) {
+      if (!window.isSecureContext || !window.streamSaver?.createWriteStream) {
+        showError('Secure Context Required', 'Encrypted files must be downloaded and decrypted in a secure context (HTTPS).');
+        return;
+      }
+    }
+
+    // For plain files in non-secure context, fall back to direct download
+    if (!downloadState.isEncrypted && (!window.isSecureContext || !window.streamSaver?.createWriteStream)) {
+      statusTitle.textContent = 'Download Starting';
+      statusMessage.textContent = 'Your download will start in a new request (completion can\'t be tracked on HTTP).';
+      window.location.href = `/api/file/${downloadState.fileId}`;
+      return;
+    }
 
     try {
       statusTitle.textContent = 'Starting Download...';
-      statusMessage.textContent = `Your browser will now ask you where to save "${filename}".`;
+      statusMessage.textContent = `Your browser will now ask you where to save "${downloadState.fileName}".`;
 
-      // StreamSaver works best in secure contexts. If not, fall back to a plain download.
-      if (!window.isSecureContext || !window.streamSaver?.createWriteStream) {
-        statusTitle.textContent = 'Download Starting';
-        statusMessage.textContent = 'Your download will start in a new request (completion can\'t be tracked on HTTP).';
-        window.location.href = `/api/file/${fileId}`;
-        return;
-      }
-
-      const fileStream = streamSaver.createWriteStream(filename);
+      const fileStream = streamSaver.createWriteStream(downloadState.fileName);
       const writer = fileStream.getWriter();
 
-      const response = await fetch(`/api/file/${fileId}`);
-      if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
-      if (!response.body) throw new Error('Streaming not supported in this browser.');
-
-      const reader = response.body.getReader();
-
-      const headerLen = response.headers.get('Content-Length');
-      const totalBytes = headerLen ? Number(headerLen) : Number(expectedSizeBytes) || 0;
-
-      let receivedLength = 0;
-
-      statusTitle.textContent = 'Downloading';
+      statusTitle.textContent = downloadState.isEncrypted ? 'Downloading & Decrypting' : 'Downloading';
       statusMessage.textContent = 'Streaming directly to file...';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        receivedLength += value.length;
-        await writer.write(value);
-
-        const percentage = totalBytes ? Math.round((receivedLength / totalBytes) * 100) : 0;
-        progressBar.style.width = `${percentage}%`;
-        progressText.textContent = `${formatBytes(receivedLength)} / ${formatBytes(totalBytes)}`;
-        statusMessage.textContent = totalBytes
-          ? `Streaming directly to file... (${percentage}%)`
-          : `Streaming directly to file... (${formatBytes(receivedLength)})`;
-      }
+      await client.downloadFile({
+        host: location.hostname,
+        port: location.port ? Number(location.port) : undefined,
+        secure: location.protocol === 'https:',
+        fileId: downloadState.fileId,
+        keyB64: downloadState.keyB64,
+        timeoutMs: 0, // No timeout for large file downloads
+        onProgress: ({ phase, percent, receivedBytes, totalBytes }) => {
+          progressBar.style.width = `${percent}%`;
+          progressText.textContent = `${formatBytes(receivedBytes)} / ${formatBytes(totalBytes)}`;
+          statusMessage.textContent = totalBytes
+            ? `Streaming directly to file... (${percent}%)`
+            : `Streaming directly to file... (${formatBytes(receivedBytes)})`;
+        },
+        onData: async (chunk) => {
+          await writer.write(chunk);
+        },
+      });
 
       await writer.close();
 
       progressBar.style.width = '100%';
       statusTitle.textContent = 'Download Complete!';
-      statusMessage.textContent = `Your file "${filename}" has been successfully saved.`;
+      statusMessage.textContent = downloadState.isEncrypted
+        ? `Your file "${downloadState.fileName}" has been successfully decrypted and saved.`
+        : `Your file "${downloadState.fileName}" has been successfully saved.`;
       card.classList.remove('border-danger');
       card.classList.add('border-success');
       iconContainer.innerHTML = '<span class="material-icons-round text-success">check_circle</span>';
@@ -132,106 +122,10 @@
       downloadButton.disabled = false;
 
       statusTitle.textContent = 'Download Failed';
-      statusMessage.textContent = 'The link may be incorrect, expired, or the download failed.';
+      statusMessage.textContent = error.message || 'The link may be incorrect, expired, or the download failed.';
       card.classList.add('border', 'border-danger');
       iconContainer.innerHTML = '<span class="material-icons-round text-danger">error</span>';
     }
-  }
-
-  async function processDecryption(fileId, keyB64, originalFilename) {
-    downloadButton.style.display = 'none';
-    progressContainer.style.display = 'block';
-    progressBar.style.width = '0%';
-    progressText.textContent = 'Starting...';
-    card.classList.remove('border-danger');
-    card.classList.add('border', 'border-primary');
-    iconContainer.innerHTML = '<span class="material-icons-round text-primary">shield_lock</span>';
-
-    try {
-      const key = await importKey(keyB64);
-      statusTitle.textContent = 'Starting Download...';
-      statusMessage.textContent = `Your browser will now ask you where to save "${originalFilename}".`;
-
-      if (!window.isSecureContext || !window.streamSaver?.createWriteStream) {
-        showError('Secure Context Required', 'Encrypted files must be downloaded and decrypted in a secure context (HTTPS).');
-        return;
-      }
-
-      const fileStream = streamSaver.createWriteStream(originalFilename);
-      const writer = fileStream.getWriter();
-
-      const response = await fetch(`/api/file/${fileId}`);
-      if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
-
-      const reader = response.body.getReader();
-      const contentLength = +response.headers.get('Content-Length');
-      let receivedLength = 0;
-      let buffer = new Uint8Array(0);
-
-      statusTitle.textContent = 'Downloading & Decrypting';
-      statusMessage.textContent = 'Streaming directly to file...';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const newBuffer = new Uint8Array(buffer.length + value.length);
-        newBuffer.set(buffer);
-        newBuffer.set(value, buffer.length);
-        buffer = newBuffer;
-
-        const CHUNK_SIZE = 5 * 1024 * 1024;
-        const encryptedChunkSize = CHUNK_SIZE + ENCRYPTED_CHUNK_OVERHEAD;
-
-        while (buffer.length >= encryptedChunkSize) {
-          const chunkToProcess = buffer.slice(0, encryptedChunkSize);
-          buffer = buffer.slice(encryptedChunkSize);
-          const decryptedChunk = await decryptData(chunkToProcess, key);
-          await writer.write(new Uint8Array(decryptedChunk));
-        }
-
-        receivedLength += value.length;
-        const percentage = contentLength ? Math.round((receivedLength / contentLength) * 100) : 0;
-        progressBar.style.width = `${percentage}%`;
-        progressText.textContent = `${formatBytes(receivedLength)} / ${formatBytes(contentLength)}`;
-        statusMessage.textContent = `Streaming directly to file... (${percentage}%)`;
-      }
-
-      if (buffer.length > 0) {
-        const decryptedChunk = await decryptData(buffer, key);
-        await writer.write(new Uint8Array(decryptedChunk));
-      }
-
-      await writer.close();
-
-      progressBar.style.width = '100%';
-      statusTitle.textContent = 'Download Complete!';
-      statusMessage.textContent = `Your file "${originalFilename}" has been successfully decrypted and saved.`;
-      card.classList.remove('border-danger');
-      card.classList.add('border', 'border-success');
-      iconContainer.innerHTML = '<span class="material-icons-round text-success">check_circle</span>';
-    } catch (error) {
-      console.error(error);
-      progressContainer.style.display = 'none';
-      downloadButton.textContent = 'Retry Download';
-      downloadButton.style.display = 'inline-block';
-      statusTitle.textContent = 'Download Failed';
-      statusMessage.textContent = 'The link may be incorrect, expired, or the file failed to process.';
-      card.classList.add('border', 'border-danger');
-      iconContainer.innerHTML = '<span class="material-icons-round text-danger">error</span>';
-    }
-  }
-
-  async function startDownload() {
-    if (downloadState.isEncrypted) {
-      if (!downloadState.keyB64) {
-        showError('Missing Decryption Key', 'The link does not include the key needed to decrypt this file.');
-        return;
-      }
-      return processDecryption(downloadState.fileId, downloadState.keyB64, downloadState.fileName);
-    }
-
-    return processPlainDownload(downloadState.fileId, downloadState.fileName, downloadState.sizeBytes);
   }
 
   async function loadMetadata() {
@@ -274,8 +168,10 @@
         }
 
         downloadState.keyB64 = hash;
-        const key = await importKey(hash);
-        downloadState.fileName = await decryptFilename(metadata.encryptedFilename, key);
+
+        // Use dropgate-core to decrypt the filename for display
+        const key = await importKeyFromBase64(crypto, hash);
+        downloadState.fileName = await decryptFilenameFromBase64(crypto, metadata.encryptedFilename, key);
       } else {
         downloadState.fileName = metadata.filename;
       }

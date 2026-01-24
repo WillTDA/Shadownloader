@@ -249,7 +249,7 @@ function setMode(mode) {
 }
 
 function updateCapabilitiesUI() {
-  state.p2pSecureOk = isSecureContextForP2P();
+  state.p2pSecureOk = isSecureContextForP2P(location.hostname, window.isSecureContext);
 
   // Upload
   if (state.uploadEnabled) {
@@ -338,7 +338,12 @@ function applyLifetimeDefaults() {
 }
 
 async function loadServerInfo() {
-  const { serverInfo: info } = await coreClient.getServerInfo(location.origin, { timeoutMs: 5000 });
+  const { serverInfo: info } = await coreClient.getServerInfo({
+    host: location.hostname,
+    port: location.port ? Number(location.port) : undefined,
+    secure: location.protocol === 'https:',
+    timeoutMs: 5000,
+  });
   state.info = info;
 
   const upload = info?.capabilities?.upload;
@@ -540,7 +545,9 @@ async function startStandardUpload() {
 
   try {
     const result = await client.uploadFile({
-      serverUrl: location.origin,
+      host: location.hostname,
+      port: location.port ? Number(location.port) : undefined,
+      secure: location.protocol === 'https:',
       file,
       encrypt,
       lifetimeMs,
@@ -569,6 +576,22 @@ async function startStandardUpload() {
   }
 }
 
+async function loadPeerJS() {
+  if (globalThis.Peer) return globalThis.Peer;
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/vendor/peerjs.min.js';
+    script.async = true;
+    script.onload = () => {
+      if (globalThis.Peer) resolve(globalThis.Peer);
+      else reject(new Error('PeerJS failed to initialize'));
+    };
+    script.onerror = () => reject(new Error('Failed to load PeerJS'));
+    document.head.appendChild(script);
+  });
+}
+
 async function startP2PSendFlow() {
   if (!state.p2pEnabled) {
     showToast('Direct transfer is disabled on this server.');
@@ -585,9 +608,23 @@ async function startP2PSendFlow() {
     return;
   }
 
+  // Load PeerJS before starting P2P
+  let Peer;
+  try {
+    Peer = await loadPeerJS();
+  } catch (err) {
+    showToast('Failed to load P2P library.');
+    console.error(err);
+    return;
+  }
+
   els.tagline.textContent = 'Direct Transfer (P2P)';
   state.p2pSession = await startP2PSend({
     file,
+    Peer,
+    host: location.hostname,
+    port: location.port ? Number(location.port) : undefined,
+    secure: location.protocol === 'https:',
     serverInfo: state.info,
     peerjsPath: state.peerjsPath,
     iceServers: state.iceServers,
