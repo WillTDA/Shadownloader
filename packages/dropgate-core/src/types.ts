@@ -289,7 +289,7 @@ export interface FileMetadata {
  */
 export interface DownloadProgressEvent {
   /** Current phase of the download. */
-  phase: 'metadata' | 'downloading' | 'decrypting' | 'complete';
+  phase: 'server-info' | 'server-compat' | 'metadata' | 'downloading' | 'decrypting' | 'complete';
   /** Human-readable status text. */
   text?: string;
   /** Bytes received so far. */

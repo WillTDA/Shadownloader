@@ -153,6 +153,29 @@ export class DropgateClient {
 
     const baseUrl = buildBaseUrl({ host, port, secure });
 
+    // Check server compatibility before resolving
+    let serverInfo: ServerInfo;
+    try {
+      const res = await this.getServerInfo({
+        host,
+        port,
+        secure,
+        timeoutMs,
+        signal,
+      });
+      serverInfo = res.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError('Could not connect to the server.', {
+        cause: err,
+      });
+    }
+
+    const compat = this.checkCompatibility(serverInfo);
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
+
     const { res, json } = await fetchJson(
       this.fetchFn,
       `${baseUrl}/api/resolve`,
@@ -603,6 +626,32 @@ export class DropgateClient {
     }
 
     const baseUrl = buildBaseUrl({ host, port, secure });
+
+    // 0) Get server info + compat
+    progress({ phase: 'server-info', text: 'Checking server...', receivedBytes: 0, totalBytes: 0, percent: 0 });
+
+    let serverInfo: ServerInfo;
+    try {
+      const res = await this.getServerInfo({
+        host,
+        port,
+        secure,
+        timeoutMs,
+        signal,
+      });
+      serverInfo = res.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError('Could not connect to the server.', {
+        cause: err,
+      });
+    }
+
+    const compat = this.checkCompatibility(serverInfo);
+    progress({ phase: 'server-compat', text: compat.message, receivedBytes: 0, totalBytes: 0, percent: 0 });
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
 
     // 1) Fetch metadata
     progress({ phase: 'metadata', text: 'Fetching file info...', receivedBytes: 0, totalBytes: 0, percent: 0 });
