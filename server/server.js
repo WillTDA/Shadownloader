@@ -44,6 +44,7 @@ const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
 
+const port = process.env.SERVER_PORT || 52443;
 const serverName = process.env.SERVER_NAME || 'Dropgate Server';
 log('info', `Server Name: ${serverName}`);
 
@@ -94,7 +95,6 @@ if (enableP2P) {
 }
 
 const app = express();
-const port = 52443;
 // We create the HTTP server manually so we can attach a PeerServer
 // to the same port/path (fixed mount: /peerjs).
 const server = http.createServer(app);
@@ -784,7 +784,7 @@ if (enableUpload) {
 }
 
 server.listen(port, () => {
-    log('info', `Dropgate Server v${version} is running. | Port: ${port}`);
+    log('info', `Dropgate Server v${version} is running. | SERVER_PORT: ${port}`);
 });
 
 const handleShutdown = () => {

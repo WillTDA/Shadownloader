@@ -96,6 +96,7 @@ If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a 
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `SERVER_PORT` | `52443` | Port to run the server on. |
 | `SERVER_NAME` | `Dropgate Server` | Display name used by the Web UI and `GET /api/info`. |
 | `ENABLE_WEB_UI` | `true` | Enables the Web UI at `/`. |
 | `LOG_LEVEL` | `INFO` | `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`. |

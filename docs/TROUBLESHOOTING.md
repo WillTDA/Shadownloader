@@ -14,6 +14,7 @@ If you get stuck, turning on debug logs for a minute usually makes the cause obv
   - Web UI: `ENABLE_WEB_UI=true`
 - If you’re using the Web UI in a browser, make sure you’re on **HTTPS** (localhost is the usual exception).
 - If you’re behind a reverse proxy, make sure it allows request bodies large enough for upload chunks (often called something like “max body size”).
+- Ensure your network/firewall allows traffic on the server port (default `52443`, or the value set by `SERVER_PORT`).
 
 ## 2) Enable debug logging
 
