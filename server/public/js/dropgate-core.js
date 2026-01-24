@@ -1,3 +1,1509 @@
-"use strict";var DropgateCore=(()=>{var ke=Object.defineProperty;var Ke=Object.getOwnPropertyDescriptor;var Ve=Object.getOwnPropertyNames;var He=Object.prototype.hasOwnProperty;var Je=(r,e)=>{for(var t in e)ke(r,t,{get:e[t],enumerable:!0})},We=(r,e,t,o)=>{if(e&&typeof e=="object"||typeof e=="function")for(let n of Ve(e))!He.call(r,n)&&n!==t&&ke(r,n,{get:()=>e[n],enumerable:!(o=Ke(e,n))||o.enumerable});return r};var Ye=r=>We(ke({},"__esModule",{value:!0}),r);var Ze={};Je(Ze,{AES_GCM_IV_BYTES:()=>se,AES_GCM_TAG_BYTES:()=>Ne,DEFAULT_CHUNK_SIZE:()=>he,DropgateAbortError:()=>$,DropgateClient:()=>Ae,DropgateError:()=>U,DropgateNetworkError:()=>F,DropgateProtocolError:()=>N,DropgateTimeoutError:()=>te,DropgateValidationError:()=>u,ENCRYPTION_OVERHEAD_PER_CHUNK:()=>ye,arrayBufferToBase64:()=>oe,base64ToBytes:()=>$e,buildBaseUrl:()=>ne,buildPeerOptions:()=>ee,bytesToBase64:()=>Oe,createPeerWithRetries:()=>fe,decryptChunk:()=>Q,decryptFilenameFromBase64:()=>ce,encryptFilenameToBase64:()=>Se,encryptToBlob:()=>le,estimateTotalUploadSizeBytes:()=>Ce,exportKeyBase64:()=>ve,fetchJson:()=>Z,generateAesGcmKey:()=>Pe,generateP2PCode:()=>pe,getDefaultBase64:()=>J,getDefaultCrypto:()=>re,getDefaultFetch:()=>ge,importKeyFromBase64:()=>ae,isLocalhostHostname:()=>xe,isP2PCodeLike:()=>ue,isSecureContextForP2P:()=>Re,lifetimeToMs:()=>Le,makeAbortSignal:()=>X,parseSemverMajorMinor:()=>ie,parseServerUrl:()=>ze,sha256Hex:()=>be,sleep:()=>q,startP2PReceive:()=>Te,startP2PSend:()=>Me,validatePlainFilename:()=>we});var he=5242880,se=12,Ne=16,ye=28;var U=class extends Error{constructor(e,t={}){super(e),this.name=this.constructor.name,this.code=t.code||"DROPGATE_ERROR",this.details=t.details,t.cause!==void 0&&Object.defineProperty(this,"cause",{value:t.cause,writable:!1,enumerable:!1,configurable:!0})}},u=class extends U{constructor(e,t={}){super(e,{...t,code:t.code||"VALIDATION_ERROR"})}},F=class extends U{constructor(e,t={}){super(e,{...t,code:t.code||"NETWORK_ERROR"})}},N=class extends U{constructor(e,t={}){super(e,{...t,code:t.code||"PROTOCOL_ERROR"})}},$=class extends U{constructor(e="Operation aborted"){super(e,{code:"ABORT_ERROR"}),this.name="AbortError"}},te=class extends U{constructor(e="Request timed out"){super(e,{code:"TIMEOUT_ERROR"}),this.name="TimeoutError"}};function J(){if(typeof Buffer<"u"&&typeof Buffer.from=="function")return{encode(r){return Buffer.from(r).toString("base64")},decode(r){return new Uint8Array(Buffer.from(r,"base64"))}};if(typeof btoa=="function"&&typeof atob=="function")return{encode(r){let e="";for(let t=0;t<r.length;t++)e+=String.fromCharCode(r[t]);return btoa(e)},decode(r){let e=atob(r),t=new Uint8Array(e.length);for(let o=0;o<e.length;o++)t[o]=e.charCodeAt(o);return t}};throw new Error("No Base64 implementation available. Provide a Base64Adapter via options.")}function re(){return globalThis.crypto}function ge(){return globalThis.fetch?.bind(globalThis)}var Fe=null;function _e(r){return r||(Fe||(Fe=J()),Fe)}function Oe(r,e){return _e(e).encode(r)}function oe(r,e){return Oe(new Uint8Array(r),e)}function $e(r,e){return _e(e).decode(r)}var qe={minutes:6e4,hours:36e5,days:864e5};function Le(r,e){let t=String(e||"").toLowerCase(),o=Number(r);if(t==="unlimited"||!Number.isFinite(o)||o<=0)return 0;let n=qe[t];return n?Math.round(o*n):0}function ie(r){let e=String(r||"").split(".").map(n=>Number(n)),t=Number.isFinite(e[0])?e[0]:0,o=Number.isFinite(e[1])?e[1]:0;return{major:t,minor:o}}function we(r){if(typeof r!="string"||r.trim().length===0)throw new u("Invalid filename. Must be a non-empty string.");if(r.length>255||/[\/\\]/.test(r))throw new u("Invalid filename. Contains illegal characters or is too long.")}function ze(r){let e=r.trim();!e.startsWith("http://")&&!e.startsWith("https://")&&(e="https://"+e);let t=new URL(e);return{host:t.hostname,port:t.port?Number(t.port):void 0,secure:t.protocol==="https:"}}function ne(r){let{host:e,port:t,secure:o}=r;if(!e||typeof e!="string")throw new u("Server host is required.");let n=o===!1?"http":"https",s=t?`:${t}`:"";return`${n}://${e}${s}`}function q(r,e){return new Promise((t,o)=>{if(e?.aborted)return o(e.reason||new $);let n=setTimeout(t,r);e&&e.addEventListener("abort",()=>{clearTimeout(n),o(e.reason||new $)},{once:!0})})}function X(r,e){let t=new AbortController,o=null,n=s=>{t.signal.aborted||t.abort(s)};return r&&(r.aborted?n(r.reason):r.addEventListener("abort",()=>n(r.reason),{once:!0})),Number.isFinite(e)&&e>0&&(o=setTimeout(()=>{n(new te)},e)),{signal:t.signal,cleanup:()=>{o&&clearTimeout(o)}}}async function Z(r,e,t={}){let{timeoutMs:o,signal:n,...s}=t,{signal:l,cleanup:f}=X(n,o);try{let i=await r(e,{...s,signal:l}),p=await i.text(),c=null;try{c=p?JSON.parse(p):null}catch{}return{res:i,json:c,text:p}}finally{f()}}async function ae(r,e,t){let n=(t||J()).decode(e),s=new Uint8Array(n).buffer;return r.subtle.importKey("raw",s,{name:"AES-GCM"},!0,["decrypt"])}async function Q(r,e,t){let o=e.slice(0,12),n=e.slice(12);return r.subtle.decrypt({name:"AES-GCM",iv:o},t,n)}async function ce(r,e,t,o){let s=(o||J()).decode(e),l=await Q(r,s,t);return new TextDecoder().decode(l)}async function be(r,e){let t=await r.subtle.digest("SHA-256",e),o=new Uint8Array(t),n="";for(let s=0;s<o.length;s++)n+=o[s].toString(16).padStart(2,"0");return n}async function Pe(r){return r.subtle.generateKey({name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}async function ve(r,e){let t=await r.subtle.exportKey("raw",e);return oe(t)}async function le(r,e,t){let o=r.getRandomValues(new Uint8Array(12)),n=await r.subtle.encrypt({name:"AES-GCM",iv:o},t,e);return new Blob([o,new Uint8Array(n)])}async function Se(r,e,t){let o=new TextEncoder().encode(String(e)),s=await(await le(r,o.buffer,t)).arrayBuffer();return oe(s)}function Ce(r,e,t){let o=Number(r)||0;return t?o+(Number(e)||0)*28:o}var Ae=class{constructor(e){if(!e||typeof e.clientVersion!="string")throw new u("DropgateClient requires clientVersion (string).");this.clientVersion=e.clientVersion,this.chunkSize=Number.isFinite(e.chunkSize)?e.chunkSize:5242880;let t=e.fetchFn||ge();if(!t)throw new u("No fetch() implementation found.");this.fetchFn=t;let o=e.cryptoObj||re();if(!o)throw new u("No crypto implementation found.");this.cryptoObj=o,this.base64=e.base64||J(),this.logger=e.logger||null}async getServerInfo(e){let{host:t,port:o,secure:n,timeoutMs:s=5e3,signal:l}=e,f=ne({host:t,port:o,secure:n});try{let{res:i,json:p}=await Z(this.fetchFn,`${f}/api/info`,{method:"GET",timeoutMs:s,signal:l,headers:{Accept:"application/json"}});if(i.ok&&p&&typeof p=="object"&&"version"in p)return{baseUrl:f,serverInfo:p};throw new N(`Server info request failed (status ${i.status}).`)}catch(i){throw i instanceof U?i:new F("Could not reach server /api/info.",{cause:i})}}async resolveShareTarget(e,t){let{host:o,port:n,secure:s,timeoutMs:l=5e3,signal:f}=t,i=ne({host:o,port:n,secure:s}),{res:p,json:c}=await Z(this.fetchFn,`${i}/api/resolve`,{method:"POST",timeoutMs:l,signal:f,headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({value:e})});if(!p.ok){let b=(c&&typeof c=="object"&&"error"in c?c.error:null)||`Share lookup failed (status ${p.status}).`;throw new N(b,{details:c})}return c||{valid:!1,reason:"Unknown response."}}checkCompatibility(e){let t=String(e?.version||"0.0.0"),o=String(this.clientVersion||"0.0.0"),n=ie(o),s=ie(t);return n.major!==s.major?{compatible:!1,clientVersion:o,serverVersion:t,message:`Incompatible versions. Client v${o}, Server v${t}${e?.name?` (${e.name})`:""}.`}:n.minor>s.minor?{compatible:!0,clientVersion:o,serverVersion:t,message:`Client (v${o}) is newer than Server (v${t})${e?.name?` (${e.name})`:""}. Some features may not work.`}:{compatible:!0,clientVersion:o,serverVersion:t,message:`Server: v${t}, Client: v${o}${e?.name?` (${e.name})`:""}.`}}validateUploadInputs(e){let{file:t,lifetimeMs:o,encrypt:n,serverInfo:s}=e,l=s?.capabilities?.upload;if(!l||!l.enabled)throw new u("Server does not support file uploads.");let f=Number(t?.size||0);if(!t||!Number.isFinite(f)||f<=0)throw new u("File is missing or invalid.");let i=Number(l.maxSizeMB);if(Number.isFinite(i)&&i>0){let b=i*1e3*1e3,P=Math.ceil(f/this.chunkSize);if(Ce(f,P,!!n)>b){let E=n?`File too large once encryption overhead is included. Server limit: ${i} MB.`:`File too large. Server limit: ${i} MB.`;throw new u(E)}}let p=Number(l.maxLifetimeHours),c=Number(o);if(!Number.isFinite(c)||c<0||!Number.isInteger(c))throw new u("Invalid lifetime. Must be a non-negative integer (milliseconds).");if(Number.isFinite(p)&&p>0){let b=Math.round(p*60*60*1e3);if(c===0)throw new u(`Server does not allow unlimited file lifetime. Max: ${p} hours.`);if(c>b)throw new u(`File lifetime too long. Server limit: ${p} hours.`)}if(n&&!l.e2ee)throw new u("Server does not support end-to-end encryption.");return!0}async uploadFile(e){let{host:t,port:o,secure:n,file:s,lifetimeMs:l,encrypt:f,filenameOverride:i,onProgress:p,signal:c,timeouts:b={},retry:P={}}=e,B=d=>{try{p&&p(d)}catch{}};if(!this.cryptoObj?.subtle)throw new u("Web Crypto API not available (crypto.subtle).");B({phase:"server-info",text:"Checking server..."});let E,_;try{let d=await this.getServerInfo({host:t,port:o,secure:n,timeoutMs:b.serverInfoMs??5e3,signal:c});E=d.baseUrl,_=d.serverInfo}catch(d){throw d instanceof U?d:new F("Could not connect to the server.",{cause:d})}let R=this.checkCompatibility(_);if(B({phase:"server-compat",text:R.message}),!R.compatible)throw new u(R.message);let m=i??s.name??"file";f||we(m),this.validateUploadInputs({file:s,lifetimeMs:l,encrypt:f,serverInfo:_});let O=null,k=null,z=m;if(f){B({phase:"crypto",text:"Generating encryption key..."});try{O=await Pe(this.cryptoObj),k=await ve(this.cryptoObj,O),z=await Se(this.cryptoObj,m,O)}catch(d){throw new U("Failed to prepare encryption.",{code:"CRYPTO_PREP_FAILED",cause:d})}}let S=Math.ceil(s.size/this.chunkSize),g=Ce(s.size,S,f);B({phase:"init",text:"Reserving server storage..."});let v={filename:z,lifetime:l,isEncrypted:!!f,totalSize:g,totalChunks:S},I=await Z(this.fetchFn,`${E}/upload/init`,{method:"POST",timeoutMs:b.initMs??15e3,signal:c,headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(v)});if(!I.res.ok){let T=I.json?.error||`Server initialisation failed: ${I.res.status}`;throw new N(T,{details:I.json||I.text})}let a=I.json?.uploadId;if(!a||typeof a!="string")throw new N("Server did not return a valid uploadId.");let j=Number.isFinite(P.retries)?P.retries:5,w=Number.isFinite(P.backoffMs)?P.backoffMs:1e3,h=Number.isFinite(P.maxBackoffMs)?P.maxBackoffMs:3e4;for(let d=0;d<S;d++){if(c?.aborted)throw c.reason||new $;let T=d*this.chunkSize,x=Math.min(T+this.chunkSize,s.size),G=s.slice(T,x),K=d/S*100;B({phase:"chunk",text:`Uploading chunk ${d+1} of ${S}...`,percent:K,chunkIndex:d,totalChunks:S});let H=await G.arrayBuffer(),W;if(f&&O?W=await le(this.cryptoObj,H,O):W=new Blob([H]),W.size>5243904)throw new u("Chunk too large (client-side). Check chunk size settings.");let D=await W.arrayBuffer(),L=await be(this.cryptoObj,D),Y={"Content-Type":"application/octet-stream","X-Upload-ID":a,"X-Chunk-Index":String(d),"X-Chunk-Hash":L},Be=`${E}/upload/chunk`;await this.attemptChunkUpload(Be,{method:"POST",headers:Y,body:W},{retries:j,backoffMs:w,maxBackoffMs:h,timeoutMs:b.chunkMs??6e4,signal:c,progress:B,chunkIndex:d,totalChunks:S})}B({phase:"complete",text:"Finalising upload...",percent:100});let y=await Z(this.fetchFn,`${E}/upload/complete`,{method:"POST",timeoutMs:b.completeMs??3e4,signal:c,headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({uploadId:a})});if(!y.res.ok){let T=y.json?.error||"Finalisation failed.";throw new N(T,{details:y.json||y.text})}let A=y.json?.id;if(!A||typeof A!="string")throw new N("Server did not return a valid file id.");let M=`${E}/${A}`;return f&&k&&(M+=`#${k}`),B({phase:"done",text:"Upload successful!",percent:100}),{downloadUrl:M,fileId:A,uploadId:a,baseUrl:E,...f&&k?{keyB64:k}:{}}}async downloadFile(e){let{host:t,port:o,secure:n,fileId:s,keyB64:l,onProgress:f,onData:i,signal:p,timeoutMs:c=6e4}=e,b=a=>{try{f&&f(a)}catch{}};if(!s||typeof s!="string")throw new u("File ID is required.");let P=ne({host:t,port:o,secure:n});b({phase:"metadata",text:"Fetching file info...",receivedBytes:0,totalBytes:0,percent:0});let{signal:B,cleanup:E}=X(p,c),_;try{let a=await this.fetchFn(`${P}/api/file/${s}/meta`,{method:"GET",headers:{Accept:"application/json"},signal:B});if(!a.ok)throw a.status===404?new N("File not found or has expired."):new N(`Failed to fetch file metadata (status ${a.status}).`);_=await a.json()}catch(a){throw a instanceof U?a:a instanceof Error&&a.name==="AbortError"?new $("Download cancelled."):new F("Could not fetch file metadata.",{cause:a})}finally{E()}let R=!!_.isEncrypted,m=_.sizeBytes||0;if(!i&&m>104857600){let a=Math.round(m/1048576),j=Math.round(104857600/(1024*1024));throw new u(`File is too large (${a}MB) to download without streaming. Provide an onData callback to stream files larger than ${j}MB.`)}let O,k;if(R){if(!l)throw new u("Decryption key is required for encrypted files.");if(!this.cryptoObj?.subtle)throw new u("Web Crypto API not available for decryption.");b({phase:"decrypting",text:"Preparing decryption...",receivedBytes:0,totalBytes:0,percent:0});try{k=await ae(this.cryptoObj,l,this.base64),O=await ce(this.cryptoObj,_.encryptedFilename,k,this.base64)}catch(a){throw new U("Failed to decrypt filename. Invalid key or corrupted data.",{code:"DECRYPT_FILENAME_FAILED",cause:a})}}else O=_.filename||"file";b({phase:"downloading",text:"Starting download...",percent:0,receivedBytes:0,totalBytes:m});let{signal:z,cleanup:S}=X(p,c),g=0,v=[],I=!i;try{let a=await this.fetchFn(`${P}/api/file/${s}`,{method:"GET",signal:z});if(!a.ok)throw new N(`Download failed (status ${a.status}).`);if(!a.body)throw new N("Streaming response not available.");let j=a.body.getReader();if(R&&k){let w=this.chunkSize+28,h=[],y=0,C=()=>{if(h.length===0)return new Uint8Array(0);if(h.length===1){let d=h[0];return h.length=0,y=0,d}let A=new Uint8Array(y),M=0;for(let d of h)A.set(d,M),M+=d.length;return h.length=0,y=0,A};for(;;){if(p?.aborted)throw new $("Download cancelled.");let{done:A,value:M}=await j.read();if(A)break;for(h.push(M),y+=M.length;y>=w;){let T=C(),x=T.subarray(0,w);if(T.length>w){let H=T.subarray(w);h.push(H),y=H.length}let G=await Q(this.cryptoObj,x,k),K=new Uint8Array(G);I?v.push(K):await i(K)}g+=M.length;let d=m>0?Math.round(g/m*100):0;b({phase:"decrypting",text:`Downloading & decrypting... (${d}%)`,percent:d,receivedBytes:g,totalBytes:m})}if(y>0){let A=C(),M=await Q(this.cryptoObj,A,k),d=new Uint8Array(M);I?v.push(d):await i(d)}}else for(;;){if(p?.aborted)throw new $("Download cancelled.");let{done:w,value:h}=await j.read();if(w)break;I?v.push(h):await i(h),g+=h.length;let y=m>0?Math.round(g/m*100):0;b({phase:"downloading",text:`Downloading... (${y}%)`,percent:y,receivedBytes:g,totalBytes:m})}}catch(a){throw a instanceof U?a:a instanceof Error&&a.name==="AbortError"?new $("Download cancelled."):new F("Download failed.",{cause:a})}finally{S()}b({phase:"complete",text:"Download complete!",percent:100,receivedBytes:g,totalBytes:m});let V;if(I&&v.length>0){let a=v.reduce((w,h)=>w+h.length,0);V=new Uint8Array(a);let j=0;for(let w of v)V.set(w,j),j+=w.length}return{filename:O,receivedBytes:g,wasEncrypted:R,...V?{data:V}:{}}}async attemptChunkUpload(e,t,o){let{retries:n,backoffMs:s,maxBackoffMs:l,timeoutMs:f,signal:i,progress:p,chunkIndex:c,totalChunks:b}=o,P=n,B=s,E=n;for(;;){if(i?.aborted)throw i.reason||new $;let{signal:_,cleanup:R}=X(i,f);try{let m=await this.fetchFn(e,{...t,signal:_});if(m.ok)return;let O=await m.text().catch(()=>"");throw new N(`Chunk ${c+1} failed (HTTP ${m.status}).`,{details:{status:m.status,bodySnippet:O.slice(0,120)}})}catch(m){if(R(),m instanceof Error&&(m.name==="AbortError"||m.code==="ABORT_ERR"))throw m;if(i?.aborted)throw i.reason||new $;if(P<=0)throw m instanceof U?m:new F("Chunk upload failed.",{cause:m});let O=E-P+1,k=B,z=100;for(;k>0;){let S=(k/1e3).toFixed(1);p({phase:"retry-wait",text:`Chunk upload failed. Retrying in ${S}s... (${O}/${E})`,chunkIndex:c,totalChunks:b}),await q(Math.min(z,k),i),k-=z}p({phase:"retry",text:`Chunk upload failed. Retrying now... (${O}/${E})`,chunkIndex:c,totalChunks:b}),P-=1,B=Math.min(B*2,l);continue}finally{R()}}}};function xe(r){let e=String(r||"").toLowerCase();return e==="localhost"||e==="127.0.0.1"||e==="::1"}function Re(r,e){return!!e||xe(r||"")}function pe(r){let e=r||re(),t="ABCDEFGHJKLMNPQRSTUVWXYZ";if(e){let s=new Uint8Array(8);e.getRandomValues(s);let l="";for(let i=0;i<4;i++)l+=t[s[i]%t.length];let f="";for(let i=4;i<8;i++)f+=(s[i]%10).toString();return`${l}-${f}`}let o="";for(let s=0;s<4;s++)o+=t[Math.floor(Math.random()*t.length)];let n="";for(let s=0;s<4;s++)n+=Math.floor(Math.random()*10);return`${o}-${n}`}function ue(r){return/^[A-Z]{4}-\d{4}$/.test(String(r||"").trim())}function ee(r={}){let{host:e,port:t,peerjsPath:o="/peerjs",secure:n=!1,iceServers:s=[]}=r,l={host:e,path:o,secure:n,config:{iceServers:s},debug:0};return t&&(l.port=t),l}async function fe(r){let{code:e,codeGenerator:t,maxAttempts:o,buildPeer:n,onCode:s}=r,l=e||t(),f=null,i=null;for(let p=0;p<o;p++){s?.(l,p);try{return f=await new Promise((c,b)=>{let P=n(l);P.on("open",()=>c(P)),P.on("error",B=>{try{P.destroy()}catch{}b(B)})}),{peer:f,code:l}}catch(c){i=c,l=t()}}throw i||new F("Could not establish PeerJS connection.")}async function Me(r){let{file:e,Peer:t,serverInfo:o,host:n,port:s,peerjsPath:l,secure:f=!1,iceServers:i,codeGenerator:p,cryptoObj:c,maxAttempts:b=4,chunkSize:P=256*1024,readyTimeoutMs:B=8e3,endAckTimeoutMs:E=15e3,bufferHighWaterMark:_=8*1024*1024,bufferLowWaterMark:R=2*1024*1024,onCode:m,onStatus:O,onProgress:k,onComplete:z,onError:S}=r;if(!e)throw new u("File is missing.");if(!t)throw new u("PeerJS Peer constructor is required. Install peerjs and pass it as the Peer option.");let g=o?.capabilities?.p2p;if(o&&!g?.enabled)throw new u("Direct transfer is disabled on this server.");let v=l??g?.peerjsPath??"/peerjs",I=i??g?.iceServers??[],V=ee({host:n,port:s,peerjsPath:v,secure:f,iceServers:I}),a=p||(()=>pe(c)),j=x=>new t(x,V),{peer:w,code:h}=await fe({code:null,codeGenerator:a,maxAttempts:b,buildPeer:j,onCode:m}),y=!1,C=null,A=!1,M=!1,d=x=>{let G=Number.isFinite(x.total)&&x.total>0?x.total:e.size,K=Math.min(Number(x.received)||0,G||0),H=G?K/G*100:0;k?.({sent:K,total:G,percent:H})},T=()=>{y=!0;try{C?.close()}catch{}try{w.destroy()}catch{}};return w.on("connection",x=>{if(y)return;if(C){try{x.send({t:"error",message:"Another receiver is already connected."})}catch{}try{x.close()}catch{}return}C=x,O?.({phase:"connected",message:"Connected. Starting transfer..."});let G=null,K=null,H=new Promise(D=>{G=D}),W=new Promise(D=>{K=D});x.on("data",D=>{if(!D||typeof D!="object"||D instanceof ArrayBuffer||ArrayBuffer.isView(D))return;let L=D;if(L.t){if(L.t==="ready"){G?.();return}if(L.t==="progress"){d({received:L.received||0,total:L.total||0});return}if(L.t==="ack"&&L.phase==="end"){K?.(L);return}L.t==="error"&&(S?.(new F(L.message||"Receiver reported an error.")),T())}}),x.on("open",async()=>{try{if(A=!0,y)return;x.send({t:"meta",name:e.name,size:e.size,mime:e.type||"application/octet-stream"});let D=0,L=e.size,Y=x._dc;if(Y&&Number.isFinite(R))try{Y.bufferedAmountLowThreshold=R}catch{}await Promise.race([H,q(B).catch(()=>null)]);for(let me=0;me<L;me+=P){if(y)return;let Ie=await e.slice(me,me+P).arrayBuffer();if(x.send(Ie),D+=Ie.byteLength,Y)for(;Y.bufferedAmount>_;)await new Promise(je=>{let Ge=setTimeout(je,60);try{Y.addEventListener("bufferedamountlow",()=>{clearTimeout(Ge),je()},{once:!0})}catch{}})}if(y)return;x.send({t:"end"});let Be=Number.isFinite(E)?Math.max(E,Math.ceil(e.size/(1024*1024))*1e3):null,Ee=await Promise.race([W,q(Be||15e3).catch(()=>null)]);if(!Ee||typeof Ee!="object")throw new F("Receiver did not confirm completion.");let De=Ee,de=Number(De.total)||e.size,Ue=Number(De.received)||0;if(de&&Ue<de)throw new F("Receiver reported an incomplete transfer.");d({received:Ue||de,total:de}),M=!0,A=!1,z?.(),T()}catch(D){S?.(D),T()}}),x.on("error",D=>{S?.(D),T()}),x.on("close",()=>{!M&&A&&!y&&S?.(new F("Receiver disconnected before transfer completed.")),T()})}),{peer:w,code:h,stop:T}}async function Te(r){let{code:e,Peer:t,serverInfo:o,host:n,port:s,peerjsPath:l,secure:f=!1,iceServers:i,onStatus:p,onMeta:c,onData:b,onProgress:P,onComplete:B,onError:E,onDisconnect:_}=r;if(!e)throw new u("No sharing code was provided.");if(!t)throw new u("PeerJS Peer constructor is required. Install peerjs and pass it as the Peer option.");let R=o?.capabilities?.p2p;if(o&&!R?.enabled)throw new u("Direct transfer is disabled on this server.");let m=String(e).trim().replace(/\s+/g,"").toUpperCase();if(!ue(m))throw new u("Invalid direct transfer code.");let O=l??R?.peerjsPath??"/peerjs",k=i??R?.iceServers??[],z=ee({host:n,port:s,peerjsPath:O,secure:f,iceServers:k}),S=new t(void 0,z),g=0,v=0,I=0,V=120,a=Promise.resolve(),j=()=>{try{S.destroy()}catch{}};return S.on("error",w=>{E?.(w),j()}),S.on("open",()=>{let w=S.connect(m,{reliable:!0});w.on("open",()=>{p?.({phase:"connected",message:"Waiting for file details..."})}),w.on("data",async h=>{try{if(h&&typeof h=="object"&&!(h instanceof ArrayBuffer)&&!ArrayBuffer.isView(h)){let C=h;if(C.t==="meta"){let A=String(C.name||"file");g=Number(C.size)||0,v=0,a=Promise.resolve(),c?.({name:A,total:g}),P?.({received:v,total:g,percent:0});try{w.send({t:"ready"})}catch{}return}if(C.t==="end"){if(await a,g&&v<g){let A=new F("Transfer ended before the full file was received.");try{w.send({t:"error",message:A.message})}catch{}throw A}B?.({received:v,total:g});try{w.send({t:"ack",phase:"end",received:v,total:g})}catch{}return}if(C.t==="error")throw new F(C.message||"Sender reported an error.");return}let y;if(h instanceof ArrayBuffer)y=Promise.resolve(new Uint8Array(h));else if(ArrayBuffer.isView(h))y=Promise.resolve(new Uint8Array(h.buffer,h.byteOffset,h.byteLength));else if(typeof Blob<"u"&&h instanceof Blob)y=h.arrayBuffer().then(C=>new Uint8Array(C));else return;a=a.then(async()=>{let C=await y;b&&await b(C),v+=C.byteLength;let A=g?Math.min(100,v/g*100):0;P?.({received:v,total:g,percent:A});let M=Date.now();if(v===g||M-I>=V){I=M;try{w.send({t:"progress",received:v,total:g})}catch{}}}).catch(C=>{try{w.send({t:"error",message:C?.message||"Receiver write failed."})}catch{}E?.(C),j()})}catch(y){E?.(y),j()}}),w.on("close",()=>{v>0&&g>0&&v<g&&_?.()})}),{peer:S,stop:j}}return Ye(Ze);})();
-if(typeof window!=="undefined"){window.DropgateCore=DropgateCore;}
-//# sourceMappingURL=index.browser.js.map
+// src/constants.ts
+var DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
+var AES_GCM_IV_BYTES = 12;
+var AES_GCM_TAG_BYTES = 16;
+var ENCRYPTION_OVERHEAD_PER_CHUNK = AES_GCM_IV_BYTES + AES_GCM_TAG_BYTES;
+var MAX_IN_MEMORY_DOWNLOAD_BYTES = 100 * 1024 * 1024;
+
+// src/errors.ts
+var DropgateError = class extends Error {
+  constructor(message, opts = {}) {
+    super(message);
+    this.name = this.constructor.name;
+    this.code = opts.code || "DROPGATE_ERROR";
+    this.details = opts.details;
+    if (opts.cause !== void 0) {
+      Object.defineProperty(this, "cause", {
+        value: opts.cause,
+        writable: false,
+        enumerable: false,
+        configurable: true
+      });
+    }
+  }
+};
+var DropgateValidationError = class extends DropgateError {
+  constructor(message, opts = {}) {
+    super(message, { ...opts, code: opts.code || "VALIDATION_ERROR" });
+  }
+};
+var DropgateNetworkError = class extends DropgateError {
+  constructor(message, opts = {}) {
+    super(message, { ...opts, code: opts.code || "NETWORK_ERROR" });
+  }
+};
+var DropgateProtocolError = class extends DropgateError {
+  constructor(message, opts = {}) {
+    super(message, { ...opts, code: opts.code || "PROTOCOL_ERROR" });
+  }
+};
+var DropgateAbortError = class extends DropgateError {
+  constructor(message = "Operation aborted") {
+    super(message, { code: "ABORT_ERROR" });
+    this.name = "AbortError";
+  }
+};
+var DropgateTimeoutError = class extends DropgateError {
+  constructor(message = "Request timed out") {
+    super(message, { code: "TIMEOUT_ERROR" });
+    this.name = "TimeoutError";
+  }
+};
+
+// src/adapters/defaults.ts
+function getDefaultBase64() {
+  if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+    return {
+      encode(bytes) {
+        return Buffer.from(bytes).toString("base64");
+      },
+      decode(b64) {
+        return new Uint8Array(Buffer.from(b64, "base64"));
+      }
+    };
+  }
+  if (typeof btoa === "function" && typeof atob === "function") {
+    return {
+      encode(bytes) {
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+      },
+      decode(b64) {
+        const binary = atob(b64);
+        const out = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          out[i] = binary.charCodeAt(i);
+        }
+        return out;
+      }
+    };
+  }
+  throw new Error(
+    "No Base64 implementation available. Provide a Base64Adapter via options."
+  );
+}
+function getDefaultCrypto() {
+  return globalThis.crypto;
+}
+function getDefaultFetch() {
+  return globalThis.fetch?.bind(globalThis);
+}
+
+// src/utils/base64.ts
+var defaultAdapter = null;
+function getAdapter(adapter) {
+  if (adapter) return adapter;
+  if (!defaultAdapter) {
+    defaultAdapter = getDefaultBase64();
+  }
+  return defaultAdapter;
+}
+function bytesToBase64(bytes, adapter) {
+  return getAdapter(adapter).encode(bytes);
+}
+function arrayBufferToBase64(buf, adapter) {
+  return bytesToBase64(new Uint8Array(buf), adapter);
+}
+function base64ToBytes(b64, adapter) {
+  return getAdapter(adapter).decode(b64);
+}
+
+// src/utils/lifetime.ts
+var MULTIPLIERS = {
+  minutes: 60 * 1e3,
+  hours: 60 * 60 * 1e3,
+  days: 24 * 60 * 60 * 1e3
+};
+function lifetimeToMs(value, unit) {
+  const u = String(unit || "").toLowerCase();
+  const v = Number(value);
+  if (u === "unlimited") return 0;
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  const m = MULTIPLIERS[u];
+  if (!m) return 0;
+  return Math.round(v * m);
+}
+
+// src/utils/semver.ts
+function parseSemverMajorMinor(version) {
+  const parts = String(version || "").split(".").map((p) => Number(p));
+  const major = Number.isFinite(parts[0]) ? parts[0] : 0;
+  const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
+  return { major, minor };
+}
+
+// src/utils/filename.ts
+function validatePlainFilename(filename) {
+  if (typeof filename !== "string" || filename.trim().length === 0) {
+    throw new DropgateValidationError(
+      "Invalid filename. Must be a non-empty string."
+    );
+  }
+  if (filename.length > 255 || /[\/\\]/.test(filename)) {
+    throw new DropgateValidationError(
+      "Invalid filename. Contains illegal characters or is too long."
+    );
+  }
+}
+
+// src/utils/network.ts
+function parseServerUrl(urlStr) {
+  let normalized = urlStr.trim();
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    normalized = "https://" + normalized;
+  }
+  const url = new URL(normalized);
+  return {
+    host: url.hostname,
+    port: url.port ? Number(url.port) : void 0,
+    secure: url.protocol === "https:"
+  };
+}
+function buildBaseUrl(opts) {
+  const { host, port, secure } = opts;
+  if (!host || typeof host !== "string") {
+    throw new DropgateValidationError("Server host is required.");
+  }
+  const protocol = secure === false ? "http" : "https";
+  const portSuffix = port ? `:${port}` : "";
+  return `${protocol}://${host}${portSuffix}`;
+}
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      return reject(signal.reason || new DropgateAbortError());
+    }
+    const t = setTimeout(resolve, ms);
+    if (signal) {
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          reject(signal.reason || new DropgateAbortError());
+        },
+        { once: true }
+      );
+    }
+  });
+}
+function makeAbortSignal(parentSignal, timeoutMs) {
+  const controller = new AbortController();
+  let timeoutId = null;
+  const abort = (reason) => {
+    if (!controller.signal.aborted) {
+      controller.abort(reason);
+    }
+  };
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      abort(parentSignal.reason);
+    } else {
+      parentSignal.addEventListener("abort", () => abort(parentSignal.reason), {
+        once: true
+      });
+    }
+  }
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      abort(new DropgateTimeoutError());
+    }, timeoutMs);
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+}
+async function fetchJson(fetchFn, url, opts = {}) {
+  const { timeoutMs, signal, ...rest } = opts;
+  const { signal: s, cleanup } = makeAbortSignal(signal, timeoutMs);
+  try {
+    const res = await fetchFn(url, { ...rest, signal: s });
+    const text = await res.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+    }
+    return { res, json, text };
+  } finally {
+    cleanup();
+  }
+}
+
+// src/crypto/decrypt.ts
+async function importKeyFromBase64(cryptoObj, keyB64, base64) {
+  const adapter = base64 || getDefaultBase64();
+  const keyBytes = adapter.decode(keyB64);
+  const keyBuffer = new Uint8Array(keyBytes).buffer;
+  return cryptoObj.subtle.importKey(
+    "raw",
+    keyBuffer,
+    { name: "AES-GCM" },
+    true,
+    ["decrypt"]
+  );
+}
+async function decryptChunk(cryptoObj, encryptedData, key) {
+  const iv = encryptedData.slice(0, AES_GCM_IV_BYTES);
+  const ciphertext = encryptedData.slice(AES_GCM_IV_BYTES);
+  return cryptoObj.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+}
+async function decryptFilenameFromBase64(cryptoObj, encryptedFilenameB64, key, base64) {
+  const adapter = base64 || getDefaultBase64();
+  const encryptedBytes = adapter.decode(encryptedFilenameB64);
+  const decryptedBuffer = await decryptChunk(cryptoObj, encryptedBytes, key);
+  return new TextDecoder().decode(decryptedBuffer);
+}
+
+// src/crypto/index.ts
+async function sha256Hex(cryptoObj, data) {
+  const hashBuffer = await cryptoObj.subtle.digest("SHA-256", data);
+  const arr = new Uint8Array(hashBuffer);
+  let hex = "";
+  for (let i = 0; i < arr.length; i++) {
+    hex += arr[i].toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+async function generateAesGcmKey(cryptoObj) {
+  return cryptoObj.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"]
+  );
+}
+async function exportKeyBase64(cryptoObj, key) {
+  const raw = await cryptoObj.subtle.exportKey("raw", key);
+  return arrayBufferToBase64(raw);
+}
+
+// src/crypto/encrypt.ts
+async function encryptToBlob(cryptoObj, dataBuffer, key) {
+  const iv = cryptoObj.getRandomValues(new Uint8Array(AES_GCM_IV_BYTES));
+  const encrypted = await cryptoObj.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    dataBuffer
+  );
+  return new Blob([iv, new Uint8Array(encrypted)]);
+}
+async function encryptFilenameToBase64(cryptoObj, filename, key) {
+  const bytes = new TextEncoder().encode(String(filename));
+  const blob = await encryptToBlob(cryptoObj, bytes.buffer, key);
+  const buf = await blob.arrayBuffer();
+  return arrayBufferToBase64(buf);
+}
+
+// src/client/DropgateClient.ts
+function estimateTotalUploadSizeBytes(fileSizeBytes, totalChunks, isEncrypted) {
+  const base = Number(fileSizeBytes) || 0;
+  if (!isEncrypted) return base;
+  return base + (Number(totalChunks) || 0) * ENCRYPTION_OVERHEAD_PER_CHUNK;
+}
+var DropgateClient = class {
+  /**
+   * Create a new DropgateClient instance.
+   * @param opts - Client configuration options.
+   * @throws {DropgateValidationError} If clientVersion is missing or invalid.
+   */
+  constructor(opts) {
+    if (!opts || typeof opts.clientVersion !== "string") {
+      throw new DropgateValidationError(
+        "DropgateClient requires clientVersion (string)."
+      );
+    }
+    this.clientVersion = opts.clientVersion;
+    this.chunkSize = Number.isFinite(opts.chunkSize) ? opts.chunkSize : DEFAULT_CHUNK_SIZE;
+    const fetchFn = opts.fetchFn || getDefaultFetch();
+    if (!fetchFn) {
+      throw new DropgateValidationError("No fetch() implementation found.");
+    }
+    this.fetchFn = fetchFn;
+    const cryptoObj = opts.cryptoObj || getDefaultCrypto();
+    if (!cryptoObj) {
+      throw new DropgateValidationError("No crypto implementation found.");
+    }
+    this.cryptoObj = cryptoObj;
+    this.base64 = opts.base64 || getDefaultBase64();
+    this.logger = opts.logger || null;
+  }
+  /**
+   * Fetch server information from the /api/info endpoint.
+   * @param opts - Server target and request options.
+   * @returns The server base URL and server info object.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an invalid response.
+   */
+  async getServerInfo(opts) {
+    const { host, port, secure, timeoutMs = 5e3, signal } = opts;
+    const baseUrl = buildBaseUrl({ host, port, secure });
+    try {
+      const { res, json } = await fetchJson(
+        this.fetchFn,
+        `${baseUrl}/api/info`,
+        {
+          method: "GET",
+          timeoutMs,
+          signal,
+          headers: { Accept: "application/json" }
+        }
+      );
+      if (res.ok && json && typeof json === "object" && "version" in json) {
+        return { baseUrl, serverInfo: json };
+      }
+      throw new DropgateProtocolError(
+        `Server info request failed (status ${res.status}).`
+      );
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError("Could not reach server /api/info.", {
+        cause: err
+      });
+    }
+  }
+  /**
+   * Resolve a user-entered sharing code or URL via the server.
+   * @param value - The sharing code or URL to resolve.
+   * @param opts - Server target and request options.
+   * @returns The resolved share target information.
+   * @throws {DropgateProtocolError} If the share lookup fails.
+   */
+  async resolveShareTarget(value, opts) {
+    const { host, port, secure, timeoutMs = 5e3, signal } = opts;
+    const baseUrl = buildBaseUrl({ host, port, secure });
+    const { res, json } = await fetchJson(
+      this.fetchFn,
+      `${baseUrl}/api/resolve`,
+      {
+        method: "POST",
+        timeoutMs,
+        signal,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify({ value })
+      }
+    );
+    if (!res.ok) {
+      const msg = (json && typeof json === "object" && "error" in json ? json.error : null) || `Share lookup failed (status ${res.status}).`;
+      throw new DropgateProtocolError(msg, { details: json });
+    }
+    return json || { valid: false, reason: "Unknown response." };
+  }
+  /**
+   * Check version compatibility between this client and a server.
+   * @param serverInfo - Server info containing the version to check against.
+   * @returns Compatibility result with status and message.
+   */
+  checkCompatibility(serverInfo) {
+    const serverVersion = String(serverInfo?.version || "0.0.0");
+    const clientVersion = String(this.clientVersion || "0.0.0");
+    const c = parseSemverMajorMinor(clientVersion);
+    const s = parseSemverMajorMinor(serverVersion);
+    if (c.major !== s.major) {
+      return {
+        compatible: false,
+        clientVersion,
+        serverVersion,
+        message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ""}.`
+      };
+    }
+    if (c.minor > s.minor) {
+      return {
+        compatible: true,
+        clientVersion,
+        serverVersion,
+        message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ""}. Some features may not work.`
+      };
+    }
+    return {
+      compatible: true,
+      clientVersion,
+      serverVersion,
+      message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ""}.`
+    };
+  }
+  /**
+   * Validate file and upload settings against server capabilities.
+   * @param opts - Validation options containing file, settings, and server info.
+   * @returns True if validation passes.
+   * @throws {DropgateValidationError} If any validation check fails.
+   */
+  validateUploadInputs(opts) {
+    const { file, lifetimeMs, encrypt, serverInfo } = opts;
+    const caps = serverInfo?.capabilities?.upload;
+    if (!caps || !caps.enabled) {
+      throw new DropgateValidationError("Server does not support file uploads.");
+    }
+    const fileSize = Number(file?.size || 0);
+    if (!file || !Number.isFinite(fileSize) || fileSize <= 0) {
+      throw new DropgateValidationError("File is missing or invalid.");
+    }
+    const maxMB = Number(caps.maxSizeMB);
+    if (Number.isFinite(maxMB) && maxMB > 0) {
+      const limitBytes = maxMB * 1e3 * 1e3;
+      const totalChunks = Math.ceil(fileSize / this.chunkSize);
+      const estimatedBytes = estimateTotalUploadSizeBytes(
+        fileSize,
+        totalChunks,
+        Boolean(encrypt)
+      );
+      if (estimatedBytes > limitBytes) {
+        const msg = encrypt ? `File too large once encryption overhead is included. Server limit: ${maxMB} MB.` : `File too large. Server limit: ${maxMB} MB.`;
+        throw new DropgateValidationError(msg);
+      }
+    }
+    const maxHours = Number(caps.maxLifetimeHours);
+    const lt = Number(lifetimeMs);
+    if (!Number.isFinite(lt) || lt < 0 || !Number.isInteger(lt)) {
+      throw new DropgateValidationError(
+        "Invalid lifetime. Must be a non-negative integer (milliseconds)."
+      );
+    }
+    if (Number.isFinite(maxHours) && maxHours > 0) {
+      const limitMs = Math.round(maxHours * 60 * 60 * 1e3);
+      if (lt === 0) {
+        throw new DropgateValidationError(
+          `Server does not allow unlimited file lifetime. Max: ${maxHours} hours.`
+        );
+      }
+      if (lt > limitMs) {
+        throw new DropgateValidationError(
+          `File lifetime too long. Server limit: ${maxHours} hours.`
+        );
+      }
+    }
+    if (encrypt && !caps.e2ee) {
+      throw new DropgateValidationError(
+        "Server does not support end-to-end encryption."
+      );
+    }
+    return true;
+  }
+  /**
+   * Upload a file to the server with optional encryption.
+   * @param opts - Upload options including file, server target, and settings.
+   * @returns Upload result containing the download URL and file identifiers.
+   * @throws {DropgateValidationError} If input validation fails.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an error.
+   * @throws {DropgateAbortError} If the upload is cancelled.
+   */
+  async uploadFile(opts) {
+    const {
+      host,
+      port,
+      secure,
+      file,
+      lifetimeMs,
+      encrypt,
+      filenameOverride,
+      onProgress,
+      signal,
+      timeouts = {},
+      retry = {}
+    } = opts;
+    const progress = (evt) => {
+      try {
+        if (onProgress) onProgress(evt);
+      } catch {
+      }
+    };
+    if (!this.cryptoObj?.subtle) {
+      throw new DropgateValidationError(
+        "Web Crypto API not available (crypto.subtle)."
+      );
+    }
+    progress({ phase: "server-info", text: "Checking server..." });
+    let baseUrl;
+    let serverInfo;
+    try {
+      const res = await this.getServerInfo({
+        host,
+        port,
+        secure,
+        timeoutMs: timeouts.serverInfoMs ?? 5e3,
+        signal
+      });
+      baseUrl = res.baseUrl;
+      serverInfo = res.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError("Could not connect to the server.", {
+        cause: err
+      });
+    }
+    const compat = this.checkCompatibility(serverInfo);
+    progress({ phase: "server-compat", text: compat.message });
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
+    const filename = filenameOverride ?? file.name ?? "file";
+    if (!encrypt) {
+      validatePlainFilename(filename);
+    }
+    this.validateUploadInputs({ file, lifetimeMs, encrypt, serverInfo });
+    let cryptoKey = null;
+    let keyB64 = null;
+    let transmittedFilename = filename;
+    if (encrypt) {
+      progress({ phase: "crypto", text: "Generating encryption key..." });
+      try {
+        cryptoKey = await generateAesGcmKey(this.cryptoObj);
+        keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
+        transmittedFilename = await encryptFilenameToBase64(
+          this.cryptoObj,
+          filename,
+          cryptoKey
+        );
+      } catch (err) {
+        throw new DropgateError("Failed to prepare encryption.", {
+          code: "CRYPTO_PREP_FAILED",
+          cause: err
+        });
+      }
+    }
+    const totalChunks = Math.ceil(file.size / this.chunkSize);
+    const totalUploadSize = estimateTotalUploadSizeBytes(
+      file.size,
+      totalChunks,
+      encrypt
+    );
+    progress({ phase: "init", text: "Reserving server storage..." });
+    const initPayload = {
+      filename: transmittedFilename,
+      lifetime: lifetimeMs,
+      isEncrypted: Boolean(encrypt),
+      totalSize: totalUploadSize,
+      totalChunks
+    };
+    const initRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/init`, {
+      method: "POST",
+      timeoutMs: timeouts.initMs ?? 15e3,
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify(initPayload)
+    });
+    if (!initRes.res.ok) {
+      const errorJson = initRes.json;
+      const msg = errorJson?.error || `Server initialisation failed: ${initRes.res.status}`;
+      throw new DropgateProtocolError(msg, {
+        details: initRes.json || initRes.text
+      });
+    }
+    const initJson = initRes.json;
+    const uploadId = initJson?.uploadId;
+    if (!uploadId || typeof uploadId !== "string") {
+      throw new DropgateProtocolError(
+        "Server did not return a valid uploadId."
+      );
+    }
+    const retries = Number.isFinite(retry.retries) ? retry.retries : 5;
+    const baseBackoffMs = Number.isFinite(retry.backoffMs) ? retry.backoffMs : 1e3;
+    const maxBackoffMs = Number.isFinite(retry.maxBackoffMs) ? retry.maxBackoffMs : 3e4;
+    for (let i = 0; i < totalChunks; i++) {
+      if (signal?.aborted) {
+        throw signal.reason || new DropgateAbortError();
+      }
+      const start = i * this.chunkSize;
+      const end = Math.min(start + this.chunkSize, file.size);
+      let chunkBlob = file.slice(start, end);
+      const percentComplete = i / totalChunks * 100;
+      progress({
+        phase: "chunk",
+        text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
+        percent: percentComplete,
+        chunkIndex: i,
+        totalChunks
+      });
+      const chunkBuffer = await chunkBlob.arrayBuffer();
+      let uploadBlob;
+      if (encrypt && cryptoKey) {
+        uploadBlob = await encryptToBlob(this.cryptoObj, chunkBuffer, cryptoKey);
+      } else {
+        uploadBlob = new Blob([chunkBuffer]);
+      }
+      if (uploadBlob.size > DEFAULT_CHUNK_SIZE + 1024) {
+        throw new DropgateValidationError(
+          "Chunk too large (client-side). Check chunk size settings."
+        );
+      }
+      const toHash = await uploadBlob.arrayBuffer();
+      const hashHex = await sha256Hex(this.cryptoObj, toHash);
+      const headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Upload-ID": uploadId,
+        "X-Chunk-Index": String(i),
+        "X-Chunk-Hash": hashHex
+      };
+      const chunkUrl = `${baseUrl}/upload/chunk`;
+      await this.attemptChunkUpload(
+        chunkUrl,
+        {
+          method: "POST",
+          headers,
+          body: uploadBlob
+        },
+        {
+          retries,
+          backoffMs: baseBackoffMs,
+          maxBackoffMs,
+          timeoutMs: timeouts.chunkMs ?? 6e4,
+          signal,
+          progress,
+          chunkIndex: i,
+          totalChunks
+        }
+      );
+    }
+    progress({ phase: "complete", text: "Finalising upload...", percent: 100 });
+    const completeRes = await fetchJson(
+      this.fetchFn,
+      `${baseUrl}/upload/complete`,
+      {
+        method: "POST",
+        timeoutMs: timeouts.completeMs ?? 3e4,
+        signal,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify({ uploadId })
+      }
+    );
+    if (!completeRes.res.ok) {
+      const errorJson = completeRes.json;
+      const msg = errorJson?.error || "Finalisation failed.";
+      throw new DropgateProtocolError(msg, {
+        details: completeRes.json || completeRes.text
+      });
+    }
+    const completeJson = completeRes.json;
+    const fileId = completeJson?.id;
+    if (!fileId || typeof fileId !== "string") {
+      throw new DropgateProtocolError(
+        "Server did not return a valid file id."
+      );
+    }
+    let downloadUrl = `${baseUrl}/${fileId}`;
+    if (encrypt && keyB64) {
+      downloadUrl += `#${keyB64}`;
+    }
+    progress({ phase: "done", text: "Upload successful!", percent: 100 });
+    return {
+      downloadUrl,
+      fileId,
+      uploadId,
+      baseUrl,
+      ...encrypt && keyB64 ? { keyB64 } : {}
+    };
+  }
+  /**
+   * Download a file from the server with optional decryption.
+   *
+   * **Important:** For large files, you must provide an `onData` callback to stream
+   * data incrementally. Without it, the entire file is buffered in memory, which will
+   * cause memory exhaustion for large files. Files exceeding 100MB without an `onData`
+   * callback will throw a validation error.
+   *
+   * @param opts - Download options including file ID, server target, and optional key.
+   * @param opts.onData - Streaming callback that receives data chunks. Required for files > 100MB.
+   * @returns Download result containing filename and received bytes.
+   * @throws {DropgateValidationError} If input validation fails or file is too large without onData.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an error.
+   * @throws {DropgateAbortError} If the download is cancelled.
+   */
+  async downloadFile(opts) {
+    const {
+      host,
+      port,
+      secure,
+      fileId,
+      keyB64,
+      onProgress,
+      onData,
+      signal,
+      timeoutMs = 6e4
+    } = opts;
+    const progress = (evt) => {
+      try {
+        if (onProgress) onProgress(evt);
+      } catch {
+      }
+    };
+    if (!fileId || typeof fileId !== "string") {
+      throw new DropgateValidationError("File ID is required.");
+    }
+    const baseUrl = buildBaseUrl({ host, port, secure });
+    progress({ phase: "metadata", text: "Fetching file info...", receivedBytes: 0, totalBytes: 0, percent: 0 });
+    const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
+    let metadata;
+    try {
+      const metaRes = await this.fetchFn(`${baseUrl}/api/file/${fileId}/meta`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: metaSignal
+      });
+      if (!metaRes.ok) {
+        if (metaRes.status === 404) {
+          throw new DropgateProtocolError("File not found or has expired.");
+        }
+        throw new DropgateProtocolError(`Failed to fetch file metadata (status ${metaRes.status}).`);
+      }
+      metadata = await metaRes.json();
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new DropgateAbortError("Download cancelled.");
+      }
+      throw new DropgateNetworkError("Could not fetch file metadata.", { cause: err });
+    } finally {
+      metaCleanup();
+    }
+    const isEncrypted = Boolean(metadata.isEncrypted);
+    const totalBytes = metadata.sizeBytes || 0;
+    if (!onData && totalBytes > MAX_IN_MEMORY_DOWNLOAD_BYTES) {
+      const sizeMB = Math.round(totalBytes / (1024 * 1024));
+      const limitMB = Math.round(MAX_IN_MEMORY_DOWNLOAD_BYTES / (1024 * 1024));
+      throw new DropgateValidationError(
+        `File is too large (${sizeMB}MB) to download without streaming. Provide an onData callback to stream files larger than ${limitMB}MB.`
+      );
+    }
+    let filename;
+    let cryptoKey;
+    if (isEncrypted) {
+      if (!keyB64) {
+        throw new DropgateValidationError("Decryption key is required for encrypted files.");
+      }
+      if (!this.cryptoObj?.subtle) {
+        throw new DropgateValidationError("Web Crypto API not available for decryption.");
+      }
+      progress({ phase: "decrypting", text: "Preparing decryption...", receivedBytes: 0, totalBytes: 0, percent: 0 });
+      try {
+        cryptoKey = await importKeyFromBase64(this.cryptoObj, keyB64, this.base64);
+        filename = await decryptFilenameFromBase64(
+          this.cryptoObj,
+          metadata.encryptedFilename,
+          cryptoKey,
+          this.base64
+        );
+      } catch (err) {
+        throw new DropgateError("Failed to decrypt filename. Invalid key or corrupted data.", {
+          code: "DECRYPT_FILENAME_FAILED",
+          cause: err
+        });
+      }
+    } else {
+      filename = metadata.filename || "file";
+    }
+    progress({ phase: "downloading", text: "Starting download...", percent: 0, receivedBytes: 0, totalBytes });
+    const { signal: downloadSignal, cleanup: downloadCleanup } = makeAbortSignal(signal, timeoutMs);
+    let receivedBytes = 0;
+    const dataChunks = [];
+    const collectData = !onData;
+    try {
+      const downloadRes = await this.fetchFn(`${baseUrl}/api/file/${fileId}`, {
+        method: "GET",
+        signal: downloadSignal
+      });
+      if (!downloadRes.ok) {
+        throw new DropgateProtocolError(`Download failed (status ${downloadRes.status}).`);
+      }
+      if (!downloadRes.body) {
+        throw new DropgateProtocolError("Streaming response not available.");
+      }
+      const reader = downloadRes.body.getReader();
+      if (isEncrypted && cryptoKey) {
+        const ENCRYPTED_CHUNK_SIZE = this.chunkSize + ENCRYPTION_OVERHEAD_PER_CHUNK;
+        const pendingChunks = [];
+        let pendingLength = 0;
+        const flushPending = () => {
+          if (pendingChunks.length === 0) return new Uint8Array(0);
+          if (pendingChunks.length === 1) {
+            const result2 = pendingChunks[0];
+            pendingChunks.length = 0;
+            pendingLength = 0;
+            return result2;
+          }
+          const result = new Uint8Array(pendingLength);
+          let offset = 0;
+          for (const chunk of pendingChunks) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+          }
+          pendingChunks.length = 0;
+          pendingLength = 0;
+          return result;
+        };
+        while (true) {
+          if (signal?.aborted) {
+            throw new DropgateAbortError("Download cancelled.");
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          pendingChunks.push(value);
+          pendingLength += value.length;
+          while (pendingLength >= ENCRYPTED_CHUNK_SIZE) {
+            const buffer = flushPending();
+            const encryptedChunk = buffer.subarray(0, ENCRYPTED_CHUNK_SIZE);
+            if (buffer.length > ENCRYPTED_CHUNK_SIZE) {
+              const remainder = buffer.subarray(ENCRYPTED_CHUNK_SIZE);
+              pendingChunks.push(remainder);
+              pendingLength = remainder.length;
+            }
+            const decryptedBuffer = await decryptChunk(this.cryptoObj, encryptedChunk, cryptoKey);
+            const decryptedData = new Uint8Array(decryptedBuffer);
+            if (collectData) {
+              dataChunks.push(decryptedData);
+            } else {
+              await onData(decryptedData);
+            }
+          }
+          receivedBytes += value.length;
+          const percent = totalBytes > 0 ? Math.round(receivedBytes / totalBytes * 100) : 0;
+          progress({
+            phase: "decrypting",
+            text: `Downloading & decrypting... (${percent}%)`,
+            percent,
+            receivedBytes,
+            totalBytes
+          });
+        }
+        if (pendingLength > 0) {
+          const buffer = flushPending();
+          const decryptedBuffer = await decryptChunk(this.cryptoObj, buffer, cryptoKey);
+          const decryptedData = new Uint8Array(decryptedBuffer);
+          if (collectData) {
+            dataChunks.push(decryptedData);
+          } else {
+            await onData(decryptedData);
+          }
+        }
+      } else {
+        while (true) {
+          if (signal?.aborted) {
+            throw new DropgateAbortError("Download cancelled.");
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (collectData) {
+            dataChunks.push(value);
+          } else {
+            await onData(value);
+          }
+          receivedBytes += value.length;
+          const percent = totalBytes > 0 ? Math.round(receivedBytes / totalBytes * 100) : 0;
+          progress({
+            phase: "downloading",
+            text: `Downloading... (${percent}%)`,
+            percent,
+            receivedBytes,
+            totalBytes
+          });
+        }
+      }
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new DropgateAbortError("Download cancelled.");
+      }
+      throw new DropgateNetworkError("Download failed.", { cause: err });
+    } finally {
+      downloadCleanup();
+    }
+    progress({ phase: "complete", text: "Download complete!", percent: 100, receivedBytes, totalBytes });
+    let data;
+    if (collectData && dataChunks.length > 0) {
+      const totalLength = dataChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      data = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of dataChunks) {
+        data.set(chunk, offset);
+        offset += chunk.length;
+      }
+    }
+    return {
+      filename,
+      receivedBytes,
+      wasEncrypted: isEncrypted,
+      ...data ? { data } : {}
+    };
+  }
+  async attemptChunkUpload(url, fetchOptions, opts) {
+    const {
+      retries,
+      backoffMs,
+      maxBackoffMs,
+      timeoutMs,
+      signal,
+      progress,
+      chunkIndex,
+      totalChunks
+    } = opts;
+    let attemptsLeft = retries;
+    let currentBackoff = backoffMs;
+    const maxRetries = retries;
+    while (true) {
+      if (signal?.aborted) {
+        throw signal.reason || new DropgateAbortError();
+      }
+      const { signal: s, cleanup } = makeAbortSignal(signal, timeoutMs);
+      try {
+        const res = await this.fetchFn(url, { ...fetchOptions, signal: s });
+        if (res.ok) return;
+        const text = await res.text().catch(() => "");
+        const err = new DropgateProtocolError(
+          `Chunk ${chunkIndex + 1} failed (HTTP ${res.status}).`,
+          {
+            details: { status: res.status, bodySnippet: text.slice(0, 120) }
+          }
+        );
+        throw err;
+      } catch (err) {
+        cleanup();
+        if (err instanceof Error && (err.name === "AbortError" || err.code === "ABORT_ERR")) {
+          throw err;
+        }
+        if (signal?.aborted) {
+          throw signal.reason || new DropgateAbortError();
+        }
+        if (attemptsLeft <= 0) {
+          throw err instanceof DropgateError ? err : new DropgateNetworkError("Chunk upload failed.", { cause: err });
+        }
+        const attemptNumber = maxRetries - attemptsLeft + 1;
+        let remaining = currentBackoff;
+        const tick = 100;
+        while (remaining > 0) {
+          const secondsLeft = (remaining / 1e3).toFixed(1);
+          progress({
+            phase: "retry-wait",
+            text: `Chunk upload failed. Retrying in ${secondsLeft}s... (${attemptNumber}/${maxRetries})`,
+            chunkIndex,
+            totalChunks
+          });
+          await sleep(Math.min(tick, remaining), signal);
+          remaining -= tick;
+        }
+        progress({
+          phase: "retry",
+          text: `Chunk upload failed. Retrying now... (${attemptNumber}/${maxRetries})`,
+          chunkIndex,
+          totalChunks
+        });
+        attemptsLeft -= 1;
+        currentBackoff = Math.min(currentBackoff * 2, maxBackoffMs);
+        continue;
+      } finally {
+        cleanup();
+      }
+    }
+  }
+};
+
+// src/p2p/utils.ts
+function isLocalhostHostname(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+function isSecureContextForP2P(hostname, isSecureContext) {
+  return Boolean(isSecureContext) || isLocalhostHostname(hostname || "");
+}
+function generateP2PCode(cryptoObj) {
+  const crypto = cryptoObj || getDefaultCrypto();
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  if (crypto) {
+    const randomBytes = new Uint8Array(8);
+    crypto.getRandomValues(randomBytes);
+    let letterPart = "";
+    for (let i = 0; i < 4; i++) {
+      letterPart += letters[randomBytes[i] % letters.length];
+    }
+    let numberPart = "";
+    for (let i = 4; i < 8; i++) {
+      numberPart += (randomBytes[i] % 10).toString();
+    }
+    return `${letterPart}-${numberPart}`;
+  }
+  let a = "";
+  for (let i = 0; i < 4; i++) {
+    a += letters[Math.floor(Math.random() * letters.length)];
+  }
+  let b = "";
+  for (let i = 0; i < 4; i++) {
+    b += Math.floor(Math.random() * 10);
+  }
+  return `${a}-${b}`;
+}
+function isP2PCodeLike(code) {
+  return /^[A-Z]{4}-\d{4}$/.test(String(code || "").trim());
+}
+
+// src/p2p/helpers.ts
+function buildPeerOptions(opts = {}) {
+  const { host, port, peerjsPath = "/peerjs", secure = false, iceServers = [] } = opts;
+  const peerOpts = {
+    host,
+    path: peerjsPath,
+    secure,
+    config: { iceServers },
+    debug: 0
+  };
+  if (port) {
+    peerOpts.port = port;
+  }
+  return peerOpts;
+}
+async function createPeerWithRetries(opts) {
+  const { code, codeGenerator, maxAttempts, buildPeer, onCode } = opts;
+  let nextCode = code || codeGenerator();
+  let peer = null;
+  let lastError = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    onCode?.(nextCode, attempt);
+    try {
+      peer = await new Promise((resolve, reject) => {
+        const instance = buildPeer(nextCode);
+        instance.on("open", () => resolve(instance));
+        instance.on("error", (err) => {
+          try {
+            instance.destroy();
+          } catch {
+          }
+          reject(err);
+        });
+      });
+      return { peer, code: nextCode };
+    } catch (err) {
+      lastError = err;
+      nextCode = codeGenerator();
+    }
+  }
+  throw lastError || new DropgateNetworkError("Could not establish PeerJS connection.");
+}
+
+// src/p2p/send.ts
+async function startP2PSend(opts) {
+  const {
+    file,
+    Peer,
+    serverInfo,
+    host,
+    port,
+    peerjsPath,
+    secure = false,
+    iceServers,
+    codeGenerator,
+    cryptoObj,
+    maxAttempts = 4,
+    chunkSize = 256 * 1024,
+    readyTimeoutMs = 8e3,
+    endAckTimeoutMs = 15e3,
+    bufferHighWaterMark = 8 * 1024 * 1024,
+    bufferLowWaterMark = 2 * 1024 * 1024,
+    onCode,
+    onStatus,
+    onProgress,
+    onComplete,
+    onError
+  } = opts;
+  if (!file) {
+    throw new DropgateValidationError("File is missing.");
+  }
+  if (!Peer) {
+    throw new DropgateValidationError(
+      "PeerJS Peer constructor is required. Install peerjs and pass it as the Peer option."
+    );
+  }
+  const p2pCaps = serverInfo?.capabilities?.p2p;
+  if (serverInfo && !p2pCaps?.enabled) {
+    throw new DropgateValidationError("Direct transfer is disabled on this server.");
+  }
+  const finalPath = peerjsPath ?? p2pCaps?.peerjsPath ?? "/peerjs";
+  const finalIceServers = iceServers ?? p2pCaps?.iceServers ?? [];
+  const peerOpts = buildPeerOptions({
+    host,
+    port,
+    peerjsPath: finalPath,
+    secure,
+    iceServers: finalIceServers
+  });
+  const finalCodeGenerator = codeGenerator || (() => generateP2PCode(cryptoObj));
+  const buildPeer = (id) => new Peer(id, peerOpts);
+  const { peer, code } = await createPeerWithRetries({
+    code: null,
+    codeGenerator: finalCodeGenerator,
+    maxAttempts,
+    buildPeer,
+    onCode
+  });
+  let stopped = false;
+  let activeConn = null;
+  let transferActive = false;
+  let transferCompleted = false;
+  const reportProgress = (data) => {
+    const safeTotal = Number.isFinite(data.total) && data.total > 0 ? data.total : file.size;
+    const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
+    const percent = safeTotal ? safeReceived / safeTotal * 100 : 0;
+    onProgress?.({ sent: safeReceived, total: safeTotal, percent });
+  };
+  const stop = () => {
+    stopped = true;
+    try {
+      activeConn?.close();
+    } catch {
+    }
+    try {
+      peer.destroy();
+    } catch {
+    }
+  };
+  peer.on("connection", (conn) => {
+    if (stopped) return;
+    if (activeConn) {
+      try {
+        conn.send({ t: "error", message: "Another receiver is already connected." });
+      } catch {
+      }
+      try {
+        conn.close();
+      } catch {
+      }
+      return;
+    }
+    activeConn = conn;
+    onStatus?.({ phase: "connected", message: "Connected. Starting transfer..." });
+    let readyResolve = null;
+    let ackResolve = null;
+    const readyPromise = new Promise((resolve) => {
+      readyResolve = resolve;
+    });
+    const ackPromise = new Promise((resolve) => {
+      ackResolve = resolve;
+    });
+    conn.on("data", (data) => {
+      if (!data || typeof data !== "object" || data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+        return;
+      }
+      const msg = data;
+      if (!msg.t) return;
+      if (msg.t === "ready") {
+        readyResolve?.();
+        return;
+      }
+      if (msg.t === "progress") {
+        reportProgress({ received: msg.received || 0, total: msg.total || 0 });
+        return;
+      }
+      if (msg.t === "ack" && msg.phase === "end") {
+        ackResolve?.(msg);
+        return;
+      }
+      if (msg.t === "error") {
+        onError?.(new DropgateNetworkError(msg.message || "Receiver reported an error."));
+        stop();
+      }
+    });
+    conn.on("open", async () => {
+      try {
+        transferActive = true;
+        if (stopped) return;
+        conn.send({
+          t: "meta",
+          name: file.name,
+          size: file.size,
+          mime: file.type || "application/octet-stream"
+        });
+        let sent = 0;
+        const total = file.size;
+        const dc = conn._dc;
+        if (dc && Number.isFinite(bufferLowWaterMark)) {
+          try {
+            dc.bufferedAmountLowThreshold = bufferLowWaterMark;
+          } catch {
+          }
+        }
+        await Promise.race([readyPromise, sleep(readyTimeoutMs).catch(() => null)]);
+        for (let offset = 0; offset < total; offset += chunkSize) {
+          if (stopped) return;
+          const slice = file.slice(offset, offset + chunkSize);
+          const buf = await slice.arrayBuffer();
+          conn.send(buf);
+          sent += buf.byteLength;
+          if (dc) {
+            while (dc.bufferedAmount > bufferHighWaterMark) {
+              await new Promise((resolve) => {
+                const fallback = setTimeout(resolve, 60);
+                try {
+                  dc.addEventListener(
+                    "bufferedamountlow",
+                    () => {
+                      clearTimeout(fallback);
+                      resolve();
+                    },
+                    { once: true }
+                  );
+                } catch {
+                }
+              });
+            }
+          }
+        }
+        if (stopped) return;
+        conn.send({ t: "end" });
+        const ackTimeoutMs = Number.isFinite(endAckTimeoutMs) ? Math.max(endAckTimeoutMs, Math.ceil(file.size / (1024 * 1024)) * 1e3) : null;
+        const ackResult = await Promise.race([
+          ackPromise,
+          sleep(ackTimeoutMs || 15e3).catch(() => null)
+        ]);
+        if (!ackResult || typeof ackResult !== "object") {
+          throw new DropgateNetworkError("Receiver did not confirm completion.");
+        }
+        const ackData = ackResult;
+        const ackTotal = Number(ackData.total) || file.size;
+        const ackReceived = Number(ackData.received) || 0;
+        if (ackTotal && ackReceived < ackTotal) {
+          throw new DropgateNetworkError("Receiver reported an incomplete transfer.");
+        }
+        reportProgress({ received: ackReceived || ackTotal, total: ackTotal });
+        transferCompleted = true;
+        transferActive = false;
+        onComplete?.();
+        stop();
+      } catch (err) {
+        onError?.(err);
+        stop();
+      }
+    });
+    conn.on("error", (err) => {
+      onError?.(err);
+      stop();
+    });
+    conn.on("close", () => {
+      if (!transferCompleted && transferActive && !stopped) {
+        onError?.(
+          new DropgateNetworkError("Receiver disconnected before transfer completed.")
+        );
+      }
+      stop();
+    });
+  });
+  return { peer, code, stop };
+}
+
+// src/p2p/receive.ts
+async function startP2PReceive(opts) {
+  const {
+    code,
+    Peer,
+    serverInfo,
+    host,
+    port,
+    peerjsPath,
+    secure = false,
+    iceServers,
+    onStatus,
+    onMeta,
+    onData,
+    onProgress,
+    onComplete,
+    onError,
+    onDisconnect
+  } = opts;
+  if (!code) {
+    throw new DropgateValidationError("No sharing code was provided.");
+  }
+  if (!Peer) {
+    throw new DropgateValidationError(
+      "PeerJS Peer constructor is required. Install peerjs and pass it as the Peer option."
+    );
+  }
+  const p2pCaps = serverInfo?.capabilities?.p2p;
+  if (serverInfo && !p2pCaps?.enabled) {
+    throw new DropgateValidationError("Direct transfer is disabled on this server.");
+  }
+  const normalizedCode = String(code).trim().replace(/\s+/g, "").toUpperCase();
+  if (!isP2PCodeLike(normalizedCode)) {
+    throw new DropgateValidationError("Invalid direct transfer code.");
+  }
+  const finalPath = peerjsPath ?? p2pCaps?.peerjsPath ?? "/peerjs";
+  const finalIceServers = iceServers ?? p2pCaps?.iceServers ?? [];
+  const peerOpts = buildPeerOptions({
+    host,
+    port,
+    peerjsPath: finalPath,
+    secure,
+    iceServers: finalIceServers
+  });
+  const peer = new Peer(void 0, peerOpts);
+  let total = 0;
+  let received = 0;
+  let lastProgressSentAt = 0;
+  const progressIntervalMs = 120;
+  let writeQueue = Promise.resolve();
+  const stop = () => {
+    try {
+      peer.destroy();
+    } catch {
+    }
+  };
+  peer.on("error", (err) => {
+    onError?.(err);
+    stop();
+  });
+  peer.on("open", () => {
+    const conn = peer.connect(normalizedCode, { reliable: true });
+    conn.on("open", () => {
+      onStatus?.({ phase: "connected", message: "Waiting for file details..." });
+    });
+    conn.on("data", async (data) => {
+      try {
+        if (data && typeof data === "object" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+          const msg = data;
+          if (msg.t === "meta") {
+            const name = String(msg.name || "file");
+            total = Number(msg.size) || 0;
+            received = 0;
+            writeQueue = Promise.resolve();
+            onMeta?.({ name, total });
+            onProgress?.({ received, total, percent: 0 });
+            try {
+              conn.send({ t: "ready" });
+            } catch {
+            }
+            return;
+          }
+          if (msg.t === "end") {
+            await writeQueue;
+            if (total && received < total) {
+              const err = new DropgateNetworkError(
+                "Transfer ended before the full file was received."
+              );
+              try {
+                conn.send({ t: "error", message: err.message });
+              } catch {
+              }
+              throw err;
+            }
+            onComplete?.({ received, total });
+            try {
+              conn.send({ t: "ack", phase: "end", received, total });
+            } catch {
+            }
+            return;
+          }
+          if (msg.t === "error") {
+            throw new DropgateNetworkError(msg.message || "Sender reported an error.");
+          }
+          return;
+        }
+        let bufPromise;
+        if (data instanceof ArrayBuffer) {
+          bufPromise = Promise.resolve(new Uint8Array(data));
+        } else if (ArrayBuffer.isView(data)) {
+          bufPromise = Promise.resolve(
+            new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          );
+        } else if (typeof Blob !== "undefined" && data instanceof Blob) {
+          bufPromise = data.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+        } else {
+          return;
+        }
+        writeQueue = writeQueue.then(async () => {
+          const buf = await bufPromise;
+          if (onData) {
+            await onData(buf);
+          }
+          received += buf.byteLength;
+          const percent = total ? Math.min(100, received / total * 100) : 0;
+          onProgress?.({ received, total, percent });
+          const now = Date.now();
+          if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
+            lastProgressSentAt = now;
+            try {
+              conn.send({ t: "progress", received, total });
+            } catch {
+            }
+          }
+        }).catch((err) => {
+          try {
+            conn.send({
+              t: "error",
+              message: err?.message || "Receiver write failed."
+            });
+          } catch {
+          }
+          onError?.(err);
+          stop();
+        });
+      } catch (err) {
+        onError?.(err);
+        stop();
+      }
+    });
+    conn.on("close", () => {
+      if (received > 0 && total > 0 && received < total) {
+        onDisconnect?.();
+      }
+    });
+  });
+  return { peer, stop };
+}
+export {
+  AES_GCM_IV_BYTES,
+  AES_GCM_TAG_BYTES,
+  DEFAULT_CHUNK_SIZE,
+  DropgateAbortError,
+  DropgateClient,
+  DropgateError,
+  DropgateNetworkError,
+  DropgateProtocolError,
+  DropgateTimeoutError,
+  DropgateValidationError,
+  ENCRYPTION_OVERHEAD_PER_CHUNK,
+  arrayBufferToBase64,
+  base64ToBytes,
+  buildBaseUrl,
+  buildPeerOptions,
+  bytesToBase64,
+  createPeerWithRetries,
+  decryptChunk,
+  decryptFilenameFromBase64,
+  encryptFilenameToBase64,
+  encryptToBlob,
+  estimateTotalUploadSizeBytes,
+  exportKeyBase64,
+  fetchJson,
+  generateAesGcmKey,
+  generateP2PCode,
+  getDefaultBase64,
+  getDefaultCrypto,
+  getDefaultFetch,
+  importKeyFromBase64,
+  isLocalhostHostname,
+  isP2PCodeLike,
+  isSecureContextForP2P,
+  lifetimeToMs,
+  makeAbortSignal,
+  parseSemverMajorMinor,
+  parseServerUrl,
+  sha256Hex,
+  sleep,
+  startP2PReceive,
+  startP2PSend,
+  validatePlainFilename
+};
+//# sourceMappingURL=index.js.map
