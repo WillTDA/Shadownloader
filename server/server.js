@@ -237,17 +237,21 @@ app.use((req, res, next) => {
 app.use(
     helmet({
         hsts: false, // HSTS should be handled by the reverse proxy
-        crossOriginOpenerPolicy: false,
+        crossOriginOpenerPolicy: { policy: 'same-origin' },
         contentSecurityPolicy: {
             directives: {
                 ...helmet.contentSecurityPolicy.getDefaultDirectives(),
                 'upgrade-insecure-requests': null, // This should also be managed by the proxy
                 'script-src': ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
-                'style-src': ["'self'", "'unsafe-inline'"],
-                'connect-src': ["'self'", 'ws:', 'wss:'],
+                'style-src': ["'self'", "'unsafe-inline'"], // Required for inline style attributes
+                'connect-src': ["'self'"],
                 'frame-src': ["'self'"],
                 'worker-src': ["'self'", 'blob:'],
                 'child-src': ["'self'", 'blob:'],
+                'base-uri': ["'self'"],
+                'form-action': ["'self'"],
+                'object-src': ["'none'"],
+                'frame-ancestors': ["'self'"],
             },
         },
     })
