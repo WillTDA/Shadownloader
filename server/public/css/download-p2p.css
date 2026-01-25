@@ -6,6 +6,21 @@
   font-size: 3rem;
 }
 
+.file-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
+}
+
+.file-value {
+  font-weight: 600;
+}
+
+#download-button {
+  margin-top: 1.25rem;
+}
+
 .progress-info {
   font-size: 0.875rem;
   margin-top: 0.5rem;

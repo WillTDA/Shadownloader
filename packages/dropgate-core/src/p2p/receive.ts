@@ -45,6 +45,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     peerjsPath,
     secure = false,
     iceServers,
+    autoReady = true,
     onStatus,
     onMeta,
     onData,
@@ -141,13 +142,24 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             received = 0;
             writeQueue = Promise.resolve();
 
-            onMeta?.({ name, total });
-            onProgress?.({ received, total, percent: 0 });
+            // Function to send ready signal - called automatically if autoReady is true,
+            // or passed to onMeta callback for manual invocation if autoReady is false
+            const sendReady = (): void => {
+              try {
+                conn.send({ t: 'ready' });
+              } catch {
+                // Ignore send errors
+              }
+            };
 
-            try {
-              conn.send({ t: 'ready' });
-            } catch {
-              // Ignore send errors
+            if (autoReady) {
+              onMeta?.({ name, total });
+              onProgress?.({ received, total, percent: 0 });
+              sendReady();
+            } else {
+              // Pass sendReady function to callback so consumer can trigger transfer start
+              onMeta?.({ name, total, sendReady });
+              onProgress?.({ received, total, percent: 0 });
             }
             return;
           }

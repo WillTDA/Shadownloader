@@ -7,6 +7,13 @@ const elBar = document.getElementById('bar');
 const elBytes = document.getElementById('bytes');
 const elActions = document.getElementById('actions');
 const retryBtn = document.getElementById('retryBtn');
+const elFileDetails = document.getElementById('file-details');
+const elFileName = document.getElementById('file-name');
+const elFileSize = document.getElementById('file-size');
+const elDownloadBtn = document.getElementById('download-button');
+const elProgressContainer = document.getElementById('progress-container');
+const elTrustStatement = document.getElementById('trust-statement');
+const elHowItWorks = document.getElementById('how-it-works');
 
 retryBtn?.addEventListener('click', () => location.reload());
 
@@ -16,6 +23,8 @@ let total = 0;
 let received = 0;
 let transferCompleted = false;
 let writer = null;
+let pendingSendReady = null;
+let fileName = null;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -39,9 +48,13 @@ const showError = (title, message) => {
   elTitle.textContent = title;
   elMsg.textContent = message;
   elMeta.hidden = true;
+  elFileDetails.style.display = 'none';
+  elDownloadBtn.style.display = 'none';
+  elProgressContainer.style.display = 'none';
   elActions.hidden = false;
   elBytes.hidden = true;
   elBar.parentElement.hidden = true;
+  elTrustStatement.style.display = 'none';
   card?.classList.remove('border-primary', 'border-success');
   card?.classList.add('border', 'border-danger');
   if (iconContainer) {
@@ -75,6 +88,27 @@ async function loadPeerJS() {
     script.onerror = () => reject(new Error('Failed to load PeerJS'));
     document.head.appendChild(script);
   });
+}
+
+function startDownload() {
+  if (!pendingSendReady) return;
+
+  elDownloadBtn.style.display = 'none';
+  elProgressContainer.style.display = 'block';
+  elTrustStatement.style.display = 'none';
+
+  elTitle.textContent = 'Receiving...';
+  elMsg.textContent = 'Keep this tab open until the transfer completes.';
+
+  // Create streamSaver write stream
+  if (window.streamSaver?.createWriteStream) {
+    const stream = window.streamSaver.createWriteStream(fileName, total ? { size: total } : undefined);
+    writer = stream.getWriter();
+  }
+
+  // Signal the sender that we're ready to receive
+  pendingSendReady();
+  pendingSendReady = null;
 }
 
 async function start() {
@@ -127,24 +161,42 @@ async function start() {
       serverInfo: info,
       peerjsPath,
       iceServers,
+      autoReady: false, // We want to show preview before starting transfer
       onStatus: () => {
         elTitle.textContent = 'Connected';
         elMsg.textContent = 'Waiting for file details...';
       },
-      onMeta: ({ name, total: nextTotal }) => {
+      onMeta: ({ name, total: nextTotal, sendReady }) => {
         total = nextTotal;
         received = 0;
-        elMeta.hidden = false;
-        elMeta.textContent = `Receiving: ${name} (${formatBytes(total)})`;
-        elTitle.textContent = 'Receiving...';
-        elMsg.textContent = 'Keep this tab open until the transfer completes.';
-        setProgress();
+        fileName = name;
 
-        // Create streamSaver write stream
-        if (window.streamSaver?.createWriteStream) {
-          const stream = window.streamSaver.createWriteStream(name, total ? { size: total } : undefined);
-          writer = stream.getWriter();
+        // Store the sendReady function to call when user clicks download
+        pendingSendReady = sendReady;
+
+        // Show file preview
+        const card = document.getElementById('status-card');
+        const iconContainer = document.getElementById('icon-container');
+
+        elTitle.textContent = 'Ready to download';
+        elMsg.textContent = 'Review the file details below, then click Start Download.';
+
+        elFileName.textContent = name;
+        elFileSize.textContent = formatBytes(total);
+        elFileDetails.style.display = 'block';
+        elDownloadBtn.style.display = 'inline-block';
+        elTrustStatement.style.display = 'block';
+        elHowItWorks.style.display = 'none';
+
+        card?.classList.remove('border-primary');
+        card?.classList.add('border', 'border-success');
+        if (iconContainer) {
+          iconContainer.className = 'mb-3 text-success';
+          iconContainer.innerHTML = '<span class="material-icons-round">download</span>';
         }
+
+        // Add click handler for download button
+        elDownloadBtn.addEventListener('click', startDownload, { once: true });
       },
       onData: async (chunk) => {
         // Write chunk to file via streamSaver
@@ -178,6 +230,8 @@ async function start() {
         elTitle.textContent = 'Transfer Complete';
         elMsg.textContent = 'Success!';
         elMeta.textContent = 'The file has been saved to your downloads.';
+        elMeta.hidden = false;
+        elFileDetails.style.display = 'none';
         card?.classList.remove('border-primary');
         card?.classList.add('border', 'border-success');
         if (iconContainer) {

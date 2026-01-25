@@ -140,6 +140,43 @@ const session = await startP2PReceive({
 });
 ```
 
+### 📥 P2P File Transfer with Preview (Receiver)
+
+Use `autoReady: false` to show a file preview before starting the transfer:
+
+```javascript
+import { startP2PReceive } from '@dropgate/core';
+
+const Peer = await loadPeerJS();
+let writer;
+
+const session = await startP2PReceive({
+  code: 'ABCD-1234',
+  Peer,
+  host: 'dropgate.link',
+  secure: true,
+  autoReady: false, // Don't start transfer automatically
+  onMeta: ({ name, total, sendReady }) => {
+    // Show file preview to user
+    console.log(`File: ${name} (${total} bytes)`);
+    showPreviewUI(name, total);
+
+    // When user confirms, create writer and start transfer
+    confirmButton.onclick = () => {
+      writer = createWriteStream(name);
+      sendReady(); // Signal sender to begin transfer
+    };
+  },
+  onData: async (chunk) => {
+    await writer.write(chunk);
+  },
+  onComplete: () => {
+    writer.close();
+    console.log('Transfer complete!');
+  },
+});
+```
+
 ### ⬇️ Downloading a File
 
 ```javascript

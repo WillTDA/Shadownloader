@@ -145,10 +145,21 @@ export interface P2PReceiveOptions {
   secure?: boolean;
   /** ICE servers for WebRTC */
   iceServers?: RTCIceServer[];
+  /**
+   * Whether to automatically send the "ready" signal after receiving metadata.
+   * Default: true
+   * Set to false to show a preview and manually control when the transfer starts.
+   * When false, call the sendReady function passed to onMeta to start the transfer.
+   */
+  autoReady?: boolean;
   /** Callback for status updates */
   onStatus?: (evt: { phase: string; message: string }) => void;
-  /** Callback when file metadata is received */
-  onMeta?: (evt: { name: string; total: number }) => void;
+  /**
+   * Callback when file metadata is received.
+   * When autoReady is false, this callback receives a sendReady function
+   * that must be called to signal the sender to begin the transfer.
+   */
+  onMeta?: (evt: { name: string; total: number; sendReady?: () => void }) => void;
   /** Callback when data chunk is received - consumer handles file writing */
   onData?: (chunk: Uint8Array) => Promise<void> | void;
   /** Callback for progress updates */

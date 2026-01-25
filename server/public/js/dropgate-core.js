@@ -1357,6 +1357,7 @@ async function startP2PReceive(opts) {
     peerjsPath,
     secure = false,
     iceServers,
+    autoReady = true,
     onStatus,
     onMeta,
     onData,
@@ -1420,11 +1421,19 @@ async function startP2PReceive(opts) {
             total = Number(msg.size) || 0;
             received = 0;
             writeQueue = Promise.resolve();
-            onMeta?.({ name, total });
-            onProgress?.({ received, total, percent: 0 });
-            try {
-              conn.send({ t: "ready" });
-            } catch {
+            const sendReady = () => {
+              try {
+                conn.send({ t: "ready" });
+              } catch {
+              }
+            };
+            if (autoReady) {
+              onMeta?.({ name, total });
+              onProgress?.({ received, total, percent: 0 });
+              sendReady();
+            } else {
+              onMeta?.({ name, total, sendReady });
+              onProgress?.({ received, total, percent: 0 });
             }
             return;
           }
