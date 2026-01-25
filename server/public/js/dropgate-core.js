@@ -1062,11 +1062,11 @@ function isSecureContextForP2P(hostname, isSecureContext) {
   return Boolean(isSecureContext) || isLocalhostHostname(hostname || "");
 }
 function generateP2PCode(cryptoObj) {
-  const crypto = cryptoObj || getDefaultCrypto();
+  const crypto2 = cryptoObj || getDefaultCrypto();
   const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  if (crypto) {
+  if (crypto2) {
     const randomBytes = new Uint8Array(8);
-    crypto.getRandomValues(randomBytes);
+    crypto2.getRandomValues(randomBytes);
     let letterPart = "";
     for (let i = 0; i < 4; i++) {
       letterPart += letters[randomBytes[i] % letters.length];
@@ -1141,6 +1141,12 @@ async function createPeerWithRetries(opts) {
 }
 
 // src/p2p/send.ts
+function generateSessionId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+}
 async function startP2PSend(opts) {
   const {
     file,
@@ -1158,6 +1164,7 @@ async function startP2PSend(opts) {
     endAckTimeoutMs = 15e3,
     bufferHighWaterMark = 8 * 1024 * 1024,
     bufferLowWaterMark = 2 * 1024 * 1024,
+    heartbeatIntervalMs = 5e3,
     onCode,
     onStatus,
     onProgress,
@@ -1197,18 +1204,37 @@ async function startP2PSend(opts) {
     buildPeer,
     onCode
   });
-  let stopped = false;
+  const sessionId = generateSessionId();
+  let state = "listening";
   let activeConn = null;
-  let transferActive = false;
-  let transferCompleted = false;
+  let sentBytes = 0;
+  let heartbeatTimer = null;
   const reportProgress = (data) => {
     const safeTotal = Number.isFinite(data.total) && data.total > 0 ? data.total : file.size;
     const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
     const percent = safeTotal ? safeReceived / safeTotal * 100 : 0;
     onProgress?.({ processedBytes: safeReceived, totalBytes: safeTotal, percent });
   };
-  const stop = () => {
-    stopped = true;
+  const safeError = (err) => {
+    if (state === "closed" || state === "completed") return;
+    state = "closed";
+    onError?.(err);
+    cleanup();
+  };
+  const safeComplete = () => {
+    if (state !== "finishing") return;
+    state = "completed";
+    onComplete?.();
+    cleanup();
+  };
+  const cleanup = () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (typeof window !== "undefined") {
+      window.removeEventListener("beforeunload", handleUnload);
+    }
     try {
       activeConn?.close();
     } catch {
@@ -1218,20 +1244,58 @@ async function startP2PSend(opts) {
     } catch {
     }
   };
+  const handleUnload = () => {
+    try {
+      activeConn?.send({ t: "error", message: "Sender closed the connection." });
+    } catch {
+    }
+    stop();
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", handleUnload);
+  }
+  const stop = () => {
+    if (state === "closed") return;
+    state = "closed";
+    cleanup();
+  };
+  const isStopped = () => state === "closed";
   peer.on("connection", (conn) => {
-    if (stopped) return;
+    if (state === "closed") return;
     if (activeConn) {
-      try {
-        conn.send({ t: "error", message: "Another receiver is already connected." });
-      } catch {
+      const isOldConnOpen = activeConn.open !== false;
+      if (isOldConnOpen && state === "transferring") {
+        try {
+          conn.send({ t: "error", message: "Transfer already in progress." });
+        } catch {
+        }
+        try {
+          conn.close();
+        } catch {
+        }
+        return;
+      } else if (!isOldConnOpen) {
+        try {
+          activeConn.close();
+        } catch {
+        }
+        activeConn = null;
+        state = "listening";
+        sentBytes = 0;
+      } else {
+        try {
+          conn.send({ t: "error", message: "Another receiver is already connected." });
+        } catch {
+        }
+        try {
+          conn.close();
+        } catch {
+        }
+        return;
       }
-      try {
-        conn.close();
-      } catch {
-      }
-      return;
     }
     activeConn = conn;
+    state = "negotiating";
     onStatus?.({ phase: "waiting", message: "Connected. Waiting for receiver to accept..." });
     let readyResolve = null;
     let ackResolve = null;
@@ -1260,22 +1324,23 @@ async function startP2PSend(opts) {
         ackResolve?.(msg);
         return;
       }
+      if (msg.t === "pong") {
+        return;
+      }
       if (msg.t === "error") {
-        onError?.(new DropgateNetworkError(msg.message || "Receiver reported an error."));
-        stop();
+        safeError(new DropgateNetworkError(msg.message || "Receiver reported an error."));
       }
     });
     conn.on("open", async () => {
       try {
-        transferActive = true;
-        if (stopped) return;
+        if (isStopped()) return;
         conn.send({
           t: "meta",
+          sessionId,
           name: file.name,
           size: file.size,
           mime: file.type || "application/octet-stream"
         });
-        let sent = 0;
         const total = file.size;
         const dc = conn._dc;
         if (dc && Number.isFinite(bufferLowWaterMark)) {
@@ -1285,12 +1350,24 @@ async function startP2PSend(opts) {
           }
         }
         await readyPromise;
+        if (isStopped()) return;
+        if (heartbeatIntervalMs > 0) {
+          heartbeatTimer = setInterval(() => {
+            if (state === "transferring" || state === "finishing") {
+              try {
+                conn.send({ t: "ping" });
+              } catch {
+              }
+            }
+          }, heartbeatIntervalMs);
+        }
+        state = "transferring";
         for (let offset = 0; offset < total; offset += chunkSize) {
-          if (stopped) return;
+          if (isStopped()) return;
           const slice = file.slice(offset, offset + chunkSize);
           const buf = await slice.arrayBuffer();
           conn.send(buf);
-          sent += buf.byteLength;
+          sentBytes += buf.byteLength;
           if (dc) {
             while (dc.bufferedAmount > bufferHighWaterMark) {
               await new Promise((resolve) => {
@@ -1310,13 +1387,15 @@ async function startP2PSend(opts) {
             }
           }
         }
-        if (stopped) return;
+        if (isStopped()) return;
+        state = "finishing";
         conn.send({ t: "end" });
         const ackTimeoutMs = Number.isFinite(endAckTimeoutMs) ? Math.max(endAckTimeoutMs, Math.ceil(file.size / (1024 * 1024)) * 1e3) : null;
         const ackResult = await Promise.race([
           ackPromise,
           sleep(ackTimeoutMs || 15e3).catch(() => null)
         ]);
+        if (isStopped()) return;
         if (!ackResult || typeof ackResult !== "object") {
           throw new DropgateNetworkError("Receiver did not confirm completion.");
         }
@@ -1327,35 +1406,43 @@ async function startP2PSend(opts) {
           throw new DropgateNetworkError("Receiver reported an incomplete transfer.");
         }
         reportProgress({ received: ackReceived || ackTotal, total: ackTotal });
-        transferCompleted = true;
-        transferActive = false;
-        onComplete?.();
-        stop();
+        safeComplete();
       } catch (err) {
-        onError?.(err);
-        stop();
+        safeError(err);
       }
     });
     conn.on("error", (err) => {
-      onError?.(err);
-      stop();
+      safeError(err);
     });
     conn.on("close", () => {
-      if (stopped || transferCompleted) {
-        stop();
+      if (state === "closed" || state === "completed") {
+        cleanup();
         return;
       }
-      if (transferActive) {
-        onError?.(
+      if (state === "transferring" || state === "finishing") {
+        safeError(
           new DropgateNetworkError("Receiver disconnected before transfer completed.")
         );
       } else {
+        activeConn = null;
+        state = "listening";
+        sentBytes = 0;
         onDisconnect?.();
       }
-      stop();
     });
   });
-  return { peer, code, stop };
+  return {
+    peer,
+    code,
+    sessionId,
+    stop,
+    getStatus: () => state,
+    getBytesSent: () => sentBytes,
+    getConnectedPeerId: () => {
+      if (!activeConn) return null;
+      return activeConn.peer || null;
+    }
+  };
 }
 
 // src/p2p/receive.ts
@@ -1370,6 +1457,7 @@ async function startP2PReceive(opts) {
     secure = false,
     iceServers,
     autoReady = true,
+    watchdogTimeoutMs = 15e3,
     onStatus,
     onMeta,
     onData,
@@ -1406,39 +1494,103 @@ async function startP2PReceive(opts) {
     iceServers: finalIceServers
   });
   const peer = new Peer(void 0, peerOpts);
+  let state = "initializing";
   let total = 0;
   let received = 0;
+  let currentSessionId = null;
   let lastProgressSentAt = 0;
   const progressIntervalMs = 120;
   let writeQueue = Promise.resolve();
-  let metaReceived = false;
-  let transferCompleted = false;
-  const stop = () => {
+  let watchdogTimer = null;
+  let activeConn = null;
+  const resetWatchdog = () => {
+    if (watchdogTimeoutMs <= 0) return;
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+    }
+    watchdogTimer = setTimeout(() => {
+      if (state === "transferring") {
+        safeError(new DropgateNetworkError("Connection timed out (no data received)."));
+      }
+    }, watchdogTimeoutMs);
+  };
+  const clearWatchdog = () => {
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+  };
+  const safeError = (err) => {
+    if (state === "closed" || state === "completed") return;
+    state = "closed";
+    onError?.(err);
+    cleanup();
+  };
+  const safeComplete = (completeData) => {
+    if (state !== "transferring") return;
+    state = "completed";
+    onComplete?.(completeData);
+    cleanup();
+  };
+  const cleanup = () => {
+    clearWatchdog();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("beforeunload", handleUnload);
+    }
     try {
       peer.destroy();
     } catch {
     }
   };
-  peer.on("error", (err) => {
-    onError?.(err);
+  const handleUnload = () => {
+    try {
+      activeConn?.send({ t: "error", message: "Receiver closed the connection." });
+    } catch {
+    }
     stop();
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", handleUnload);
+  }
+  const stop = () => {
+    if (state === "closed") return;
+    state = "closed";
+    cleanup();
+  };
+  peer.on("error", (err) => {
+    safeError(err);
   });
   peer.on("open", () => {
+    state = "connecting";
     const conn = peer.connect(normalizedCode, { reliable: true });
+    activeConn = conn;
     conn.on("open", () => {
+      state = "negotiating";
       onStatus?.({ phase: "connected", message: "Waiting for file details..." });
     });
     conn.on("data", async (data) => {
       try {
+        resetWatchdog();
         if (data && typeof data === "object" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
           const msg = data;
           if (msg.t === "meta") {
+            if (currentSessionId && msg.sessionId && msg.sessionId !== currentSessionId) {
+              try {
+                conn.send({ t: "error", message: "Busy with another session." });
+              } catch {
+              }
+              return;
+            }
+            if (msg.sessionId) {
+              currentSessionId = msg.sessionId;
+            }
             const name = String(msg.name || "file");
             total = Number(msg.size) || 0;
             received = 0;
             writeQueue = Promise.resolve();
-            metaReceived = true;
             const sendReady = () => {
+              state = "transferring";
+              resetWatchdog();
               try {
                 conn.send({ t: "ready" });
               } catch {
@@ -1454,7 +1606,15 @@ async function startP2PReceive(opts) {
             }
             return;
           }
+          if (msg.t === "ping") {
+            try {
+              conn.send({ t: "pong" });
+            } catch {
+            }
+            return;
+          }
           if (msg.t === "end") {
+            clearWatchdog();
             await writeQueue;
             if (total && received < total) {
               const err = new DropgateNetworkError(
@@ -1466,12 +1626,11 @@ async function startP2PReceive(opts) {
               }
               throw err;
             }
-            transferCompleted = true;
-            onComplete?.({ received, total });
             try {
               conn.send({ t: "ack", phase: "end", received, total });
             } catch {
             }
+            safeComplete({ received, total });
             return;
           }
           if (msg.t === "error") {
@@ -1515,26 +1674,36 @@ async function startP2PReceive(opts) {
             });
           } catch {
           }
-          onError?.(err);
-          stop();
+          safeError(err);
         });
       } catch (err) {
-        onError?.(err);
-        stop();
+        safeError(err);
       }
     });
     conn.on("close", () => {
-      if (transferCompleted) {
+      if (state === "closed" || state === "completed") {
+        cleanup();
         return;
       }
-      if (metaReceived) {
+      if (state === "transferring") {
+        safeError(new DropgateNetworkError("Sender disconnected during transfer."));
+      } else if (state === "negotiating") {
+        state = "closed";
+        cleanup();
         onDisconnect?.();
       } else {
-        onError?.(new DropgateNetworkError("Sender disconnected before file details were received."));
+        safeError(new DropgateNetworkError("Sender disconnected before file details were received."));
       }
     });
   });
-  return { peer, stop };
+  return {
+    peer,
+    stop,
+    getStatus: () => state,
+    getBytesReceived: () => received,
+    getTotalBytes: () => total,
+    getSessionId: () => currentSessionId
+  };
 }
 export {
   AES_GCM_IV_BYTES,

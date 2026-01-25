@@ -1,6 +1,34 @@
 import type { FileSource, ServerInfo, CryptoAdapter, BaseProgressEvent } from '../types.js';
 
 // ============================================================================
+// Session State Machine Types
+// ============================================================================
+
+/**
+ * Finite state machine states for P2P send sessions.
+ * Prevents race conditions and ensures callbacks fire in correct order.
+ */
+export type P2PSendState =
+  | 'initializing'  // Peer is being created
+  | 'listening'     // Waiting for receiver to connect
+  | 'negotiating'   // Connected, sending metadata, waiting for ready
+  | 'transferring'  // Actively sending file data
+  | 'finishing'     // Sent end message, waiting for ack
+  | 'completed'     // Transfer successful
+  | 'closed';       // Session ended (success, error, or stopped)
+
+/**
+ * Finite state machine states for P2P receive sessions.
+ */
+export type P2PReceiveState =
+  | 'initializing'  // Peer is being created
+  | 'connecting'    // Connecting to sender
+  | 'negotiating'   // Connected, waiting for metadata
+  | 'transferring'  // Actively receiving file data
+  | 'completed'     // Transfer successful
+  | 'closed';       // Session ended (success, error, or stopped)
+
+// ============================================================================
 // PeerJS Types
 // ============================================================================
 
@@ -157,6 +185,8 @@ export interface P2PSendOptions extends P2PServerConfig {
   bufferHighWaterMark?: number;
   /** Buffer low water mark for flow control. */
   bufferLowWaterMark?: number;
+  /** Heartbeat interval in ms for long transfers (default: 5000, 0 to disable). */
+  heartbeatIntervalMs?: number;
   /** Callback when code is generated. */
   onCode?: (code: string, attempt: number) => void;
   /** Callback for status updates. */
@@ -179,8 +209,16 @@ export interface P2PSendSession {
   peer: PeerInstance;
   /** The generated sharing code. */
   code: string;
+  /** The unique session ID for this transfer. */
+  sessionId: string;
   /** Stop the session and clean up resources. */
   stop: () => void;
+  /** Get the current session state. */
+  getStatus: () => P2PSendState;
+  /** Get the number of bytes sent so far. */
+  getBytesSent: () => number;
+  /** Get the connected receiver's peer ID (if connected). */
+  getConnectedPeerId: () => string | null;
 }
 
 // ============================================================================
@@ -204,6 +242,11 @@ export interface P2PReceiveOptions extends P2PServerConfig {
    * When false, call the sendReady function passed to onMeta to start the transfer.
    */
   autoReady?: boolean;
+  /**
+   * Timeout in ms for detecting dead connections (no data received).
+   * Default: 15000 (15 seconds). Set to 0 to disable.
+   */
+  watchdogTimeoutMs?: number;
   /** Callback for status updates. */
   onStatus?: (evt: P2PStatusEvent) => void;
   /**
@@ -232,4 +275,12 @@ export interface P2PReceiveSession {
   peer: PeerInstance;
   /** Stop the session and clean up resources. */
   stop: () => void;
+  /** Get the current session state. */
+  getStatus: () => P2PReceiveState;
+  /** Get the number of bytes received so far. */
+  getBytesReceived: () => number;
+  /** Get the expected total bytes (0 if metadata not received). */
+  getTotalBytes: () => number;
+  /** Get the current session ID (if received from sender). */
+  getSessionId: () => string | null;
 }

@@ -6,6 +6,9 @@ export { buildPeerOptions, createPeerWithRetries, resolvePeerConfig } from './he
 
 // Re-export types
 export type {
+  // State machine types
+  P2PSendState,
+  P2PReceiveState,
   // PeerJS types
   PeerConstructor,
   PeerInstance,
