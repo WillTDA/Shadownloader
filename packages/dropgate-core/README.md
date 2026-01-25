@@ -72,11 +72,9 @@ console.log('Download URL:', result.downloadUrl);
 ### ℹ️ Getting Server Info
 
 ```javascript
-import { DropgateClient } from '@dropgate/core';
+import { getServerInfo } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.1.0' });
-
-const { serverInfo } = await client.getServerInfo({
+const { serverInfo } = await getServerInfo({
   host: 'dropgate.link',
   secure: true,
   timeoutMs: 5000,
@@ -85,6 +83,28 @@ const { serverInfo } = await client.getServerInfo({
 console.log('Server version:', serverInfo.version);
 console.log('Upload enabled:', serverInfo.capabilities?.upload?.enabled);
 console.log('P2P enabled:', serverInfo.capabilities?.p2p?.enabled);
+```
+
+### 🔍 Checking Compatibility
+
+```javascript
+import { DropgateClient } from '@dropgate/core';
+
+const client = new DropgateClient({ clientVersion: '2.1.0' });
+
+// checkCompatibility fetches server info internally and compares versions
+const compat = await client.checkCompatibility({
+  host: 'dropgate.link',
+  secure: true,
+  timeoutMs: 5000,
+});
+
+console.log('Compatible:', compat.compatible);
+console.log('Message:', compat.message);
+console.log('Server version:', compat.serverVersion);
+console.log('Client version:', compat.clientVersion);
+// Also returns serverInfo and baseUrl for convenience
+console.log('Server capabilities:', compat.serverInfo.capabilities);
 ```
 
 ### 📤 P2P File Transfer (Sender)
@@ -234,10 +254,9 @@ The main client class for interacting with Dropgate servers.
 
 | Method | Description |
 | --- | --- |
-| `getServerInfo(opts)` | Fetch server info and capabilities |
 | `uploadFile(opts)` | Upload a file with optional encryption |
 | `downloadFile(opts)` | Download a file with optional decryption |
-| `checkCompatibility(serverInfo)` | Check client/server version compatibility |
+| `checkCompatibility(opts)` | Fetch server info and check client/server version compatibility |
 | `validateUploadInputs(opts)` | Validate file and settings before upload |
 | `resolveShareTarget(value, opts)` | Resolve a sharing code via the server |
 
@@ -256,6 +275,7 @@ The main client class for interacting with Dropgate servers.
 
 | Function | Description |
 | --- | --- |
+| `getServerInfo(opts)` | Fetch server info and capabilities |
 | `parseServerUrl(urlStr)` | Parse a URL string into host/port/secure |
 | `buildBaseUrl(opts)` | Build a URL from host/port/secure |
 | `lifetimeToMs(value, unit)` | Convert lifetime to milliseconds |
@@ -281,7 +301,7 @@ For browser environments, you can use the IIFE bundle:
 ```html
 <script src="/path/to/dropgate-core.browser.js"></script>
 <script>
-  const { DropgateClient, startP2PSend } = DropgateCore;
+  const { DropgateClient, getServerInfo, startP2PSend } = DropgateCore;
   // ...
 </script>
 ```
@@ -290,7 +310,7 @@ Or as an ES module:
 
 ```html
 <script type="module">
-  import { DropgateClient } from '/path/to/dropgate-core.js';
+  import { DropgateClient, getServerInfo } from '/path/to/dropgate-core.js';
   // ...
 </script>
 ```

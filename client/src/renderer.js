@@ -1,4 +1,4 @@
-import { DropgateClient, lifetimeToMs, parseServerUrl } from './dropgate-core.js';
+import { DropgateClient, getServerInfo, lifetimeToMs, parseServerUrl } from './dropgate-core.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -157,7 +157,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             try {
                 const serverTarget = parseServerUrl(serverUrl);
-                await coreClient.getServerInfo({ ...serverTarget, timeoutMs: 5000 });
+                await getServerInfo({ ...serverTarget, timeoutMs: 5000 });
 
                 if (serverTarget.secure) {
                     connectionStatus.textContent = `Connection successful (HTTPS).`;
@@ -399,7 +399,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             try {
                 const serverTarget = parseServerUrl(inputUrl);
-                const { serverInfo } = await coreClient.getServerInfo({ ...serverTarget, timeoutMs: 5000 });
+                const compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+
+                const { serverInfo } = compat;
 
                 if (!serverInfo || !serverInfo?.version || !serverInfo?.capabilities) {
                     const message = 'Error: Cannot determine server version or capabilities.';
@@ -412,8 +414,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 serverCapabilities = serverInfo.capabilities;
                 applyServerLimits();
-
-                const compat = coreClient.checkCompatibility(serverInfo);
 
                 if (!compat.compatible) {
                     uploadBtn.disabled = true;

@@ -1,4 +1,4 @@
-import { DropgateClient, isSecureContextForP2P, startP2PReceive } from './dropgate-core.js';
+import { getServerInfo, isSecureContextForP2P, startP2PReceive } from './dropgate-core.js';
 
 const elTitle = document.getElementById('title');
 const elMsg = document.getElementById('message');
@@ -12,6 +12,8 @@ const elFileName = document.getElementById('file-name');
 const elFileSize = document.getElementById('file-size');
 const elDownloadBtn = document.getElementById('download-button');
 const elProgressContainer = document.getElementById('progress-container');
+const card = document.getElementById('status-card');
+const iconContainer = document.getElementById('icon-container');
 const elTrustStatement = document.getElementById('trust-statement');
 const elHowItWorks = document.getElementById('how-it-works');
 
@@ -43,8 +45,6 @@ const setProgress = () => {
 };
 
 const showError = (title, message) => {
-  const card = document.getElementById('status-card');
-  const iconContainer = document.getElementById('icon-container');
   elTitle.textContent = title;
   elMsg.textContent = message;
   elMeta.hidden = true;
@@ -64,8 +64,7 @@ const showError = (title, message) => {
 };
 
 async function loadServerInfo() {
-  const client = new DropgateClient({ clientVersion: '0.0.0' });
-  const { serverInfo } = await client.getServerInfo({
+  const { serverInfo } = await getServerInfo({
     host: location.hostname,
     port: location.port ? Number(location.port) : undefined,
     secure: location.protocol === 'https:',
@@ -95,7 +94,7 @@ function startDownload() {
 
   elDownloadBtn.style.display = 'none';
   elProgressContainer.style.display = 'block';
-  elTrustStatement.style.display = 'none';
+  card?.classList.add('border-primary');
 
   elTitle.textContent = 'Receiving...';
   elMsg.textContent = 'Keep this tab open until the transfer completes.';
@@ -175,10 +174,7 @@ async function start() {
         pendingSendReady = sendReady;
 
         // Show file preview
-        const card = document.getElementById('status-card');
-        const iconContainer = document.getElementById('icon-container');
-
-        elTitle.textContent = 'Ready to download';
+        elTitle.textContent = 'Ready to Download';
         elMsg.textContent = 'Review the file details below, then click Start Download.';
 
         elFileName.textContent = name;
@@ -187,13 +183,8 @@ async function start() {
         elDownloadBtn.style.display = 'inline-block';
         elTrustStatement.style.display = 'block';
         elHowItWorks.style.display = 'none';
-
+        
         card?.classList.remove('border-primary');
-        card?.classList.add('border', 'border-success');
-        if (iconContainer) {
-          iconContainer.className = 'mb-3 text-success';
-          iconContainer.innerHTML = '<span class="material-icons-round">download</span>';
-        }
 
         // Add click handler for download button
         elDownloadBtn.addEventListener('click', startDownload, { once: true });
@@ -225,8 +216,6 @@ async function start() {
           writer = null;
         }
 
-        const card = document.getElementById('status-card');
-        const iconContainer = document.getElementById('icon-container');
         elTitle.textContent = 'Transfer Complete';
         elMsg.textContent = 'Success!';
         elMeta.textContent = 'The file has been saved to your downloads.';

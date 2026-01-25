@@ -47,6 +47,52 @@ export function estimateTotalUploadSizeBytes(
 }
 
 /**
+ * Fetch server information from the /api/info endpoint.
+ * @param opts - Server target and request options.
+ * @returns The server base URL and server info object.
+ * @throws {DropgateNetworkError} If the server cannot be reached.
+ * @throws {DropgateProtocolError} If the server returns an invalid response.
+ */
+export async function getServerInfo(
+  opts: GetServerInfoOptions
+): Promise<{ baseUrl: string; serverInfo: ServerInfo }> {
+  const { host, port, secure, timeoutMs = 5000, signal, fetchFn: customFetch } = opts;
+
+  const fetchFn = customFetch || getDefaultFetch();
+  if (!fetchFn) {
+    throw new DropgateValidationError('No fetch() implementation found.');
+  }
+
+  const baseUrl = buildBaseUrl({ host, port, secure });
+
+  try {
+    const { res, json } = await fetchJson(
+      fetchFn,
+      `${baseUrl}/api/info`,
+      {
+        method: 'GET',
+        timeoutMs,
+        signal,
+        headers: { Accept: 'application/json' },
+      }
+    );
+
+    if (res.ok && json && typeof json === 'object' && 'version' in json) {
+      return { baseUrl, serverInfo: json as ServerInfo };
+    }
+
+    throw new DropgateProtocolError(
+      `Server info request failed (status ${res.status}).`
+    );
+  } catch (err) {
+    if (err instanceof DropgateError) throw err;
+    throw new DropgateNetworkError('Could not reach server /api/info.', {
+      cause: err,
+    });
+  }
+}
+
+/**
  * Headless, environment-agnostic client for Dropgate file uploads.
  * Handles server communication, encryption, and chunked uploads.
  */
@@ -98,47 +144,6 @@ export class DropgateClient {
   }
 
   /**
-   * Fetch server information from the /api/info endpoint.
-   * @param opts - Server target and request options.
-   * @returns The server base URL and server info object.
-   * @throws {DropgateNetworkError} If the server cannot be reached.
-   * @throws {DropgateProtocolError} If the server returns an invalid response.
-   */
-  async getServerInfo(
-    opts: GetServerInfoOptions
-  ): Promise<{ baseUrl: string; serverInfo: ServerInfo }> {
-    const { host, port, secure, timeoutMs = 5000, signal } = opts;
-
-    const baseUrl = buildBaseUrl({ host, port, secure });
-
-    try {
-      const { res, json } = await fetchJson(
-        this.fetchFn,
-        `${baseUrl}/api/info`,
-        {
-          method: 'GET',
-          timeoutMs,
-          signal,
-          headers: { Accept: 'application/json' },
-        }
-      );
-
-      if (res.ok && json && typeof json === 'object' && 'version' in json) {
-        return { baseUrl, serverInfo: json as ServerInfo };
-      }
-
-      throw new DropgateProtocolError(
-        `Server info request failed (status ${res.status}).`
-      );
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not reach server /api/info.', {
-        cause: err,
-      });
-    }
-  }
-
-  /**
    * Resolve a user-entered sharing code or URL via the server.
    * @param value - The sharing code or URL to resolve.
    * @param opts - Server target and request options.
@@ -149,32 +154,15 @@ export class DropgateClient {
     value: string,
     opts: GetServerInfoOptions
   ): Promise<ShareTargetResult> {
-    const { host, port, secure, timeoutMs = 5000, signal } = opts;
-
-    const baseUrl = buildBaseUrl({ host, port, secure });
+    const { timeoutMs = 5000, signal } = opts;
 
     // Check server compatibility before resolving
-    let serverInfo: ServerInfo;
-    try {
-      const res = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs,
-        signal,
-      });
-      serverInfo = res.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not connect to the server.', {
-        cause: err,
-      });
-    }
-
-    const compat = this.checkCompatibility(serverInfo);
+    const compat = await this.checkCompatibility(opts);
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
+
+    const { baseUrl } = compat;
 
     const { res, json } = await fetchJson(
       this.fetchFn,
@@ -204,10 +192,29 @@ export class DropgateClient {
 
   /**
    * Check version compatibility between this client and a server.
-   * @param serverInfo - Server info containing the version to check against.
-   * @returns Compatibility result with status and message.
+   * Fetches server info internally using getServerInfo.
+   * @param opts - Server target and request options.
+   * @returns Compatibility result with status, message, and server info.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an invalid response.
    */
-  checkCompatibility(serverInfo: ServerInfo): CompatibilityResult {
+  async checkCompatibility(
+    opts: GetServerInfoOptions
+  ): Promise<CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }> {
+    let baseUrl: string;
+    let serverInfo: ServerInfo;
+
+    try {
+      const result = await getServerInfo({ ...opts, fetchFn: this.fetchFn });
+      baseUrl = result.baseUrl;
+      serverInfo = result.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError('Could not connect to the server.', {
+        cause: err,
+      });
+    }
+
     const serverVersion = String(serverInfo?.version || '0.0.0');
     const clientVersion = String(this.clientVersion || '0.0.0');
 
@@ -220,6 +227,8 @@ export class DropgateClient {
         clientVersion,
         serverVersion,
         message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
+        serverInfo,
+        baseUrl,
       };
     }
 
@@ -229,6 +238,8 @@ export class DropgateClient {
         clientVersion,
         serverVersion,
         message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ''}. Some features may not work.`,
+        serverInfo,
+        baseUrl,
       };
     }
 
@@ -237,6 +248,8 @@ export class DropgateClient {
       clientVersion,
       serverVersion,
       message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
+      serverInfo,
+      baseUrl,
     };
   }
 
@@ -352,26 +365,15 @@ export class DropgateClient {
     // 0) Get server info + compat
     progress({ phase: 'server-info', text: 'Checking server...' });
 
-    let baseUrl: string;
-    let serverInfo: ServerInfo;
-    try {
-      const res = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs: timeouts.serverInfoMs ?? 5000,
-        signal,
-      });
-      baseUrl = res.baseUrl;
-      serverInfo = res.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not connect to the server.', {
-        cause: err,
-      });
-    }
+    const compat = await this.checkCompatibility({
+      host,
+      port,
+      secure,
+      timeoutMs: timeouts.serverInfoMs ?? 5000,
+      signal,
+    });
 
-    const compat = this.checkCompatibility(serverInfo);
+    const { baseUrl, serverInfo } = compat;
     progress({ phase: 'server-compat', text: compat.message });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
@@ -625,29 +627,18 @@ export class DropgateClient {
       throw new DropgateValidationError('File ID is required.');
     }
 
-    const baseUrl = buildBaseUrl({ host, port, secure });
-
     // 0) Get server info + compat
     progress({ phase: 'server-info', text: 'Checking server...', receivedBytes: 0, totalBytes: 0, percent: 0 });
 
-    let serverInfo: ServerInfo;
-    try {
-      const res = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs,
-        signal,
-      });
-      serverInfo = res.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not connect to the server.', {
-        cause: err,
-      });
-    }
+    const compat = await this.checkCompatibility({
+      host,
+      port,
+      secure,
+      timeoutMs,
+      signal,
+    });
 
-    const compat = this.checkCompatibility(serverInfo);
+    const { baseUrl } = compat;
     progress({ phase: 'server-compat', text: compat.message, receivedBytes: 0, totalBytes: 0, percent: 0 });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);

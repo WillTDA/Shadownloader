@@ -1,5 +1,9 @@
 import type { FileSource, ServerInfo, CryptoAdapter } from '../types.js';
 
+// ============================================================================
+// PeerJS Types
+// ============================================================================
+
 /**
  * PeerJS Peer constructor interface.
  * Consumer must provide this constructor to P2P functions.
@@ -29,21 +33,34 @@ export interface PeerOptions {
   debug?: number;
 }
 
+/** Event handlers for PeerInstance. */
+export interface PeerInstanceEvents {
+  open: (id: string) => void;
+  connection: (conn: DataConnection) => void;
+  error: (err: Error) => void;
+  close: () => void;
+}
+
 /**
  * PeerJS Peer instance interface.
  * Represents a connection to the PeerJS signaling server.
  */
 export interface PeerInstance {
   /** Register an event handler. */
-  on(event: 'open', callback: (id: string) => void): void;
-  on(event: 'connection', callback: (conn: DataConnection) => void): void;
-  on(event: 'error', callback: (err: Error) => void): void;
-  on(event: 'close', callback: () => void): void;
+  on<K extends keyof PeerInstanceEvents>(event: K, callback: PeerInstanceEvents[K]): void;
   on(event: string, callback: (...args: unknown[]) => void): void;
   /** Connect to another peer by ID. */
   connect(peerId: string, options?: { reliable?: boolean }): DataConnection;
   /** Destroy this peer and close all connections. */
   destroy(): void;
+}
+
+/** Event handlers for DataConnection. */
+export interface DataConnectionEvents {
+  open: () => void;
+  data: (data: unknown) => void;
+  close: () => void;
+  error: (err: Error) => void;
 }
 
 /**
@@ -52,10 +69,7 @@ export interface PeerInstance {
  */
 export interface DataConnection {
   /** Register an event handler. */
-  on(event: 'open', callback: () => void): void;
-  on(event: 'data', callback: (data: unknown) => void): void;
-  on(event: 'close', callback: () => void): void;
-  on(event: 'error', callback: (err: Error) => void): void;
+  on<K extends keyof DataConnectionEvents>(event: K, callback: DataConnectionEvents[K]): void;
   on(event: string, callback: (...args: unknown[]) => void): void;
   /** Send data to the connected peer. */
   send(data: unknown): void;
@@ -65,51 +79,101 @@ export interface DataConnection {
   _dc?: RTCDataChannel;
 }
 
+// ============================================================================
+// P2P Server Configuration
+// ============================================================================
+
+/**
+ * Common server configuration for P2P connections.
+ */
+export interface P2PServerConfig {
+  /** PeerJS server host. */
+  host?: string;
+  /** PeerJS server port. */
+  port?: number;
+  /** PeerJS server path (default: /peerjs). */
+  peerjsPath?: string;
+  /** Whether to use secure connection. */
+  secure?: boolean;
+  /** ICE servers for WebRTC. */
+  iceServers?: RTCIceServer[];
+}
+
+// ============================================================================
+// P2P Event Types
+// ============================================================================
+
+/** Status event for P2P operations. */
+export interface P2PStatusEvent {
+  phase: string;
+  message: string;
+}
+
+/** Progress event for P2P send operations. */
+export interface P2PSendProgressEvent {
+  sent: number;
+  total: number;
+  percent: number;
+}
+
+/** Progress event for P2P receive operations. */
+export interface P2PReceiveProgressEvent {
+  received: number;
+  total: number;
+  percent: number;
+}
+
+/** Metadata event when receiving a file. */
+export interface P2PMetadataEvent {
+  name: string;
+  total: number;
+  /** Call this to signal the sender to begin transfer (when autoReady is false). */
+  sendReady?: () => void;
+}
+
+/** Completion event for P2P receive operations. */
+export interface P2PReceiveCompleteEvent {
+  received: number;
+  total: number;
+}
+
+// ============================================================================
+// P2P Send Options
+// ============================================================================
+
 /**
  * Options for starting a P2P send session.
  */
-export interface P2PSendOptions {
-  /** File to send */
+export interface P2PSendOptions extends P2PServerConfig {
+  /** File to send. */
   file: FileSource;
-  /** PeerJS Peer constructor - REQUIRED */
+  /** PeerJS Peer constructor - REQUIRED. */
   Peer: PeerConstructor;
-  /** Server info (optional, for capability checking) */
+  /** Server info (optional, for capability checking). */
   serverInfo?: ServerInfo;
-  /** PeerJS server host */
-  host?: string;
-  /** PeerJS server port */
-  port?: number;
-  /** PeerJS server path (default: /peerjs) */
-  peerjsPath?: string;
-  /** Whether to use secure connection */
-  secure?: boolean;
-  /** ICE servers for WebRTC */
-  iceServers?: RTCIceServer[];
-  /** Custom code generator function */
+  /** Custom code generator function. */
   codeGenerator?: (cryptoObj?: CryptoAdapter) => string;
-  /** Crypto object for secure code generation */
+  /** Crypto object for secure code generation. */
   cryptoObj?: CryptoAdapter;
-  /** Max attempts to register a peer ID */
+  /** Max attempts to register a peer ID. */
   maxAttempts?: number;
-  /** Chunk size for data transfer */
+  /** Chunk size for data transfer. */
   chunkSize?: number;
-  /** Timeout waiting for receiver ready signal */
-  readyTimeoutMs?: number;
-  /** Timeout waiting for end acknowledgment */
+  /** Timeout waiting for end acknowledgment. */
   endAckTimeoutMs?: number;
-  /** Buffer high water mark for flow control */
+  /** Buffer high water mark for flow control. */
   bufferHighWaterMark?: number;
-  /** Buffer low water mark for flow control */
+  /** Buffer low water mark for flow control. */
   bufferLowWaterMark?: number;
-  /** Callback when code is generated */
+  /** Callback when code is generated. */
   onCode?: (code: string, attempt: number) => void;
-  /** Callback for status updates */
-  onStatus?: (evt: { phase: string; message: string }) => void;
-  /** Callback for progress updates */
-  onProgress?: (evt: { sent: number; total: number; percent: number }) => void;
-  /** Callback when transfer completes */
+  /** Callback for status updates. */
+  onStatus?: (evt: P2PStatusEvent) => void;
+  /** Callback for progress updates. */
+  onProgress?: (evt: P2PSendProgressEvent) => void;
+  /** Callback when transfer completes. */
   onComplete?: () => void;
-  /** Callback on error */
+  /** Callback on error. */
   onError?: (err: Error) => void;
 }
 
@@ -125,50 +189,44 @@ export interface P2PSendSession {
   stop: () => void;
 }
 
+// ============================================================================
+// P2P Receive Options
+// ============================================================================
+
 /**
  * Options for starting a P2P receive session.
  */
-export interface P2PReceiveOptions {
-  /** Sharing code to connect to */
+export interface P2PReceiveOptions extends P2PServerConfig {
+  /** Sharing code to connect to. */
   code: string;
-  /** PeerJS Peer constructor - REQUIRED */
+  /** PeerJS Peer constructor - REQUIRED. */
   Peer: PeerConstructor;
-  /** Server info (optional, for capability checking) */
+  /** Server info (optional, for capability checking). */
   serverInfo?: ServerInfo;
-  /** PeerJS server host */
-  host?: string;
-  /** PeerJS server port */
-  port?: number;
-  /** PeerJS server path (default: /peerjs) */
-  peerjsPath?: string;
-  /** Whether to use secure connection */
-  secure?: boolean;
-  /** ICE servers for WebRTC */
-  iceServers?: RTCIceServer[];
   /**
    * Whether to automatically send the "ready" signal after receiving metadata.
-   * Default: true
+   * Default: true.
    * Set to false to show a preview and manually control when the transfer starts.
    * When false, call the sendReady function passed to onMeta to start the transfer.
    */
   autoReady?: boolean;
-  /** Callback for status updates */
-  onStatus?: (evt: { phase: string; message: string }) => void;
+  /** Callback for status updates. */
+  onStatus?: (evt: P2PStatusEvent) => void;
   /**
    * Callback when file metadata is received.
    * When autoReady is false, this callback receives a sendReady function
    * that must be called to signal the sender to begin the transfer.
    */
-  onMeta?: (evt: { name: string; total: number; sendReady?: () => void }) => void;
-  /** Callback when data chunk is received - consumer handles file writing */
+  onMeta?: (evt: P2PMetadataEvent) => void;
+  /** Callback when data chunk is received - consumer handles file writing. */
   onData?: (chunk: Uint8Array) => Promise<void> | void;
-  /** Callback for progress updates */
-  onProgress?: (evt: { received: number; total: number; percent: number }) => void;
-  /** Callback when transfer completes */
-  onComplete?: (evt: { received: number; total: number }) => void;
-  /** Callback on error */
+  /** Callback for progress updates. */
+  onProgress?: (evt: P2PReceiveProgressEvent) => void;
+  /** Callback when transfer completes. */
+  onComplete?: (evt: P2PReceiveCompleteEvent) => void;
+  /** Callback on error. */
   onError?: (err: Error) => void;
-  /** Callback when sender disconnects */
+  /** Callback when sender disconnects. */
   onDisconnect?: () => void;
 }
 

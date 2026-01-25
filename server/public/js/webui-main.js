@@ -2,6 +2,7 @@ import {
   DEFAULT_CHUNK_SIZE,
   DropgateClient,
   estimateTotalUploadSizeBytes,
+  getServerInfo,
   isSecureContextForP2P,
   lifetimeToMs,
   startP2PSend,
@@ -87,7 +88,7 @@ const state = {
   p2pSecureOk: true,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '0.0.0' });
+const coreClient = new DropgateClient({ clientVersion: '2.1.0' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -338,7 +339,7 @@ function applyLifetimeDefaults() {
 }
 
 async function loadServerInfo() {
-  const { serverInfo: info } = await coreClient.getServerInfo({
+  const { serverInfo: info } = await getServerInfo({
     host: location.hostname,
     port: location.port ? Number(location.port) : undefined,
     secure: location.protocol === 'https:',
@@ -537,14 +538,12 @@ async function startStandardUpload() {
     return;
   }
 
-  const client = new DropgateClient({ clientVersion: state.info?.version || '0.0.0' });
-
   const lifetimeMs = lifetimeMsFromUI();
 
   showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
-    const result = await client.uploadFile({
+    const result = await coreClient.uploadFile({
       host: location.hostname,
       port: location.port ? Number(location.port) : undefined,
       secure: location.protocol === 'https:',
@@ -783,7 +782,12 @@ function wireUI() {
 
     setDisabled(els.codeGo, true);
     try {
-      const result = await coreClient.resolveShareTarget(location.origin, value);
+      const result = await coreClient.resolveShareTarget(value, {
+        host: location.hostname,
+        port: location.port ? Number(location.port) : undefined,
+        secure: location.protocol === 'https:',
+        timeoutMs: 5000,
+      });
       if (!result?.valid || !result?.target) {
         showToast(result?.reason || 'That sharing code could not be validated.', 'warning');
         return;

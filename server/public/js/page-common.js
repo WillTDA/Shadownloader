@@ -1,9 +1,8 @@
-import { DropgateClient } from './dropgate-core.js';
+import { getServerInfo } from './dropgate-core.js';
 
 (async () => {
   try {
-    const client = new DropgateClient({ clientVersion: '0.0.0' });
-    const { serverInfo } = await client.getServerInfo({
+    const { serverInfo } = await getServerInfo({
       host: location.hostname,
       port: location.port ? Number(location.port) : undefined,
       secure: location.protocol === 'https:',

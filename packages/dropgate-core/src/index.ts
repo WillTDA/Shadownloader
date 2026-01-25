@@ -73,7 +73,7 @@ export {
 export { encryptToBlob, encryptFilenameToBase64 } from './crypto/encrypt.js';
 
 // Client
-export { DropgateClient, estimateTotalUploadSizeBytes } from './client/DropgateClient.js';
+export { DropgateClient, estimateTotalUploadSizeBytes, getServerInfo } from './client/DropgateClient.js';
 
 // Adapters
 export { getDefaultBase64, getDefaultCrypto, getDefaultFetch } from './adapters/defaults.js';
@@ -88,13 +88,26 @@ export {
   isSecureContextForP2P,
   buildPeerOptions,
   createPeerWithRetries,
+  resolvePeerConfig,
 } from './p2p/index.js';
 
 export type {
+  // PeerJS types
   PeerConstructor,
   PeerInstance,
+  PeerInstanceEvents,
   PeerOptions,
   DataConnection,
+  DataConnectionEvents,
+  // P2P config
+  P2PServerConfig,
+  // P2P event types
+  P2PStatusEvent,
+  P2PSendProgressEvent,
+  P2PReceiveProgressEvent,
+  P2PMetadataEvent,
+  P2PReceiveCompleteEvent,
+  // P2P options and sessions
   P2PSendOptions,
   P2PSendSession,
   P2PReceiveOptions,

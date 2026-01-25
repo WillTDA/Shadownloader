@@ -1,7 +1,7 @@
 import { DropgateValidationError, DropgateNetworkError } from '../errors.js';
 import type { P2PReceiveOptions, P2PReceiveSession } from './types.js';
 import { isP2PCodeLike } from './utils.js';
-import { buildPeerOptions } from './helpers.js';
+import { buildPeerOptions, resolvePeerConfig } from './helpers.js';
 
 /**
  * Start a direct transfer (P2P) receiver session.
@@ -78,9 +78,11 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     throw new DropgateValidationError('Invalid direct transfer code.');
   }
 
-  // Determine options (use serverInfo if available)
-  const finalPath = peerjsPath ?? p2pCaps?.peerjsPath ?? '/peerjs';
-  const finalIceServers = iceServers ?? p2pCaps?.iceServers ?? [];
+  // Resolve config from user options and server capabilities
+  const { path: finalPath, iceServers: finalIceServers } = resolvePeerConfig(
+    { peerjsPath, iceServers },
+    p2pCaps
+  );
 
   // Build peer options
   const peerOpts = buildPeerOptions({

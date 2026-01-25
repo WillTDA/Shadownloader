@@ -254,6 +254,8 @@ export interface GetServerInfoOptions extends ServerTarget {
   timeoutMs?: number;
   /** AbortSignal to cancel the request. */
   signal?: AbortSignal;
+  /** Custom fetch implementation (uses global fetch by default). */
+  fetchFn?: FetchFn;
 }
 
 /**

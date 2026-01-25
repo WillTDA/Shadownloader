@@ -1,19 +1,26 @@
 import { DropgateNetworkError } from '../errors.js';
-import type { PeerInstance, PeerOptions } from './types.js';
+import type { P2PCapabilities } from '../types.js';
+import type { PeerInstance, PeerOptions, P2PServerConfig } from './types.js';
 
-export interface BuildPeerOptionsInput {
-  host?: string;
-  port?: number;
-  peerjsPath?: string;
-  secure?: boolean;
-  iceServers?: RTCIceServer[];
+/**
+ * Resolve P2P server configuration from user options and server capabilities.
+ * User-provided values take precedence over server capabilities.
+ */
+export function resolvePeerConfig(
+  userConfig: P2PServerConfig,
+  serverCaps?: P2PCapabilities
+): { path: string; iceServers: RTCIceServer[] } {
+  return {
+    path: userConfig.peerjsPath ?? serverCaps?.peerjsPath ?? '/peerjs',
+    iceServers: userConfig.iceServers ?? serverCaps?.iceServers ?? [],
+  };
 }
 
 /**
- * Build PeerJS connection options
+ * Build PeerJS connection options from P2P server configuration.
  */
-export function buildPeerOptions(opts: BuildPeerOptionsInput = {}): PeerOptions {
-  const { host, port, peerjsPath = '/peerjs', secure = false, iceServers = [] } = opts;
+export function buildPeerOptions(config: P2PServerConfig = {}): PeerOptions {
+  const { host, port, peerjsPath = '/peerjs', secure = false, iceServers = [] } = config;
 
   const peerOpts: PeerOptions = {
     host,

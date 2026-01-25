@@ -309,6 +309,37 @@ function estimateTotalUploadSizeBytes(fileSizeBytes, totalChunks, isEncrypted) {
   if (!isEncrypted) return base;
   return base + (Number(totalChunks) || 0) * ENCRYPTION_OVERHEAD_PER_CHUNK;
 }
+async function getServerInfo(opts) {
+  const { host, port, secure, timeoutMs = 5e3, signal, fetchFn: customFetch } = opts;
+  const fetchFn = customFetch || getDefaultFetch();
+  if (!fetchFn) {
+    throw new DropgateValidationError("No fetch() implementation found.");
+  }
+  const baseUrl = buildBaseUrl({ host, port, secure });
+  try {
+    const { res, json } = await fetchJson(
+      fetchFn,
+      `${baseUrl}/api/info`,
+      {
+        method: "GET",
+        timeoutMs,
+        signal,
+        headers: { Accept: "application/json" }
+      }
+    );
+    if (res.ok && json && typeof json === "object" && "version" in json) {
+      return { baseUrl, serverInfo: json };
+    }
+    throw new DropgateProtocolError(
+      `Server info request failed (status ${res.status}).`
+    );
+  } catch (err) {
+    if (err instanceof DropgateError) throw err;
+    throw new DropgateNetworkError("Could not reach server /api/info.", {
+      cause: err
+    });
+  }
+}
 var DropgateClient = class {
   /**
    * Create a new DropgateClient instance.
@@ -337,40 +368,6 @@ var DropgateClient = class {
     this.logger = opts.logger || null;
   }
   /**
-   * Fetch server information from the /api/info endpoint.
-   * @param opts - Server target and request options.
-   * @returns The server base URL and server info object.
-   * @throws {DropgateNetworkError} If the server cannot be reached.
-   * @throws {DropgateProtocolError} If the server returns an invalid response.
-   */
-  async getServerInfo(opts) {
-    const { host, port, secure, timeoutMs = 5e3, signal } = opts;
-    const baseUrl = buildBaseUrl({ host, port, secure });
-    try {
-      const { res, json } = await fetchJson(
-        this.fetchFn,
-        `${baseUrl}/api/info`,
-        {
-          method: "GET",
-          timeoutMs,
-          signal,
-          headers: { Accept: "application/json" }
-        }
-      );
-      if (res.ok && json && typeof json === "object" && "version" in json) {
-        return { baseUrl, serverInfo: json };
-      }
-      throw new DropgateProtocolError(
-        `Server info request failed (status ${res.status}).`
-      );
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError("Could not reach server /api/info.", {
-        cause: err
-      });
-    }
-  }
-  /**
    * Resolve a user-entered sharing code or URL via the server.
    * @param value - The sharing code or URL to resolve.
    * @param opts - Server target and request options.
@@ -378,28 +375,12 @@ var DropgateClient = class {
    * @throws {DropgateProtocolError} If the share lookup fails.
    */
   async resolveShareTarget(value, opts) {
-    const { host, port, secure, timeoutMs = 5e3, signal } = opts;
-    const baseUrl = buildBaseUrl({ host, port, secure });
-    let serverInfo;
-    try {
-      const res2 = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs,
-        signal
-      });
-      serverInfo = res2.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError("Could not connect to the server.", {
-        cause: err
-      });
-    }
-    const compat = this.checkCompatibility(serverInfo);
+    const { timeoutMs = 5e3, signal } = opts;
+    const compat = await this.checkCompatibility(opts);
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
+    const { baseUrl } = compat;
     const { res, json } = await fetchJson(
       this.fetchFn,
       `${baseUrl}/api/resolve`,
@@ -422,10 +403,25 @@ var DropgateClient = class {
   }
   /**
    * Check version compatibility between this client and a server.
-   * @param serverInfo - Server info containing the version to check against.
-   * @returns Compatibility result with status and message.
+   * Fetches server info internally using getServerInfo.
+   * @param opts - Server target and request options.
+   * @returns Compatibility result with status, message, and server info.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an invalid response.
    */
-  checkCompatibility(serverInfo) {
+  async checkCompatibility(opts) {
+    let baseUrl;
+    let serverInfo;
+    try {
+      const result = await getServerInfo({ ...opts, fetchFn: this.fetchFn });
+      baseUrl = result.baseUrl;
+      serverInfo = result.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError("Could not connect to the server.", {
+        cause: err
+      });
+    }
     const serverVersion = String(serverInfo?.version || "0.0.0");
     const clientVersion = String(this.clientVersion || "0.0.0");
     const c = parseSemverMajorMinor(clientVersion);
@@ -435,7 +431,9 @@ var DropgateClient = class {
         compatible: false,
         clientVersion,
         serverVersion,
-        message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ""}.`
+        message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ""}.`,
+        serverInfo,
+        baseUrl
       };
     }
     if (c.minor > s.minor) {
@@ -443,14 +441,18 @@ var DropgateClient = class {
         compatible: true,
         clientVersion,
         serverVersion,
-        message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ""}. Some features may not work.`
+        message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ""}. Some features may not work.`,
+        serverInfo,
+        baseUrl
       };
     }
     return {
       compatible: true,
       clientVersion,
       serverVersion,
-      message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ""}.`
+      message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ""}.`,
+      serverInfo,
+      baseUrl
     };
   }
   /**
@@ -545,25 +547,14 @@ var DropgateClient = class {
       );
     }
     progress({ phase: "server-info", text: "Checking server..." });
-    let baseUrl;
-    let serverInfo;
-    try {
-      const res = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs: timeouts.serverInfoMs ?? 5e3,
-        signal
-      });
-      baseUrl = res.baseUrl;
-      serverInfo = res.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError("Could not connect to the server.", {
-        cause: err
-      });
-    }
-    const compat = this.checkCompatibility(serverInfo);
+    const compat = await this.checkCompatibility({
+      host,
+      port,
+      secure,
+      timeoutMs: timeouts.serverInfoMs ?? 5e3,
+      signal
+    });
+    const { baseUrl, serverInfo } = compat;
     progress({ phase: "server-compat", text: compat.message });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
@@ -768,25 +759,15 @@ var DropgateClient = class {
     if (!fileId || typeof fileId !== "string") {
       throw new DropgateValidationError("File ID is required.");
     }
-    const baseUrl = buildBaseUrl({ host, port, secure });
     progress({ phase: "server-info", text: "Checking server...", receivedBytes: 0, totalBytes: 0, percent: 0 });
-    let serverInfo;
-    try {
-      const res = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs,
-        signal
-      });
-      serverInfo = res.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError("Could not connect to the server.", {
-        cause: err
-      });
-    }
-    const compat = this.checkCompatibility(serverInfo);
+    const compat = await this.checkCompatibility({
+      host,
+      port,
+      secure,
+      timeoutMs,
+      signal
+    });
+    const { baseUrl } = compat;
     progress({ phase: "server-compat", text: compat.message, receivedBytes: 0, totalBytes: 0, percent: 0 });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
@@ -1095,8 +1076,14 @@ function isP2PCodeLike(code) {
 }
 
 // src/p2p/helpers.ts
-function buildPeerOptions(opts = {}) {
-  const { host, port, peerjsPath = "/peerjs", secure = false, iceServers = [] } = opts;
+function resolvePeerConfig(userConfig, serverCaps) {
+  return {
+    path: userConfig.peerjsPath ?? serverCaps?.peerjsPath ?? "/peerjs",
+    iceServers: userConfig.iceServers ?? serverCaps?.iceServers ?? []
+  };
+}
+function buildPeerOptions(config = {}) {
+  const { host, port, peerjsPath = "/peerjs", secure = false, iceServers = [] } = config;
   const peerOpts = {
     host,
     path: peerjsPath,
@@ -1152,7 +1139,6 @@ async function startP2PSend(opts) {
     cryptoObj,
     maxAttempts = 4,
     chunkSize = 256 * 1024,
-    readyTimeoutMs = 8e3,
     endAckTimeoutMs = 15e3,
     bufferHighWaterMark = 8 * 1024 * 1024,
     bufferLowWaterMark = 2 * 1024 * 1024,
@@ -1174,8 +1160,10 @@ async function startP2PSend(opts) {
   if (serverInfo && !p2pCaps?.enabled) {
     throw new DropgateValidationError("Direct transfer is disabled on this server.");
   }
-  const finalPath = peerjsPath ?? p2pCaps?.peerjsPath ?? "/peerjs";
-  const finalIceServers = iceServers ?? p2pCaps?.iceServers ?? [];
+  const { path: finalPath, iceServers: finalIceServers } = resolvePeerConfig(
+    { peerjsPath, iceServers },
+    p2pCaps
+  );
   const peerOpts = buildPeerOptions({
     host,
     port,
@@ -1278,7 +1266,7 @@ async function startP2PSend(opts) {
           } catch {
           }
         }
-        await Promise.race([readyPromise, sleep(readyTimeoutMs).catch(() => null)]);
+        await readyPromise;
         for (let offset = 0; offset < total; offset += chunkSize) {
           if (stopped) return;
           const slice = file.slice(offset, offset + chunkSize);
@@ -1382,8 +1370,10 @@ async function startP2PReceive(opts) {
   if (!isP2PCodeLike(normalizedCode)) {
     throw new DropgateValidationError("Invalid direct transfer code.");
   }
-  const finalPath = peerjsPath ?? p2pCaps?.peerjsPath ?? "/peerjs";
-  const finalIceServers = iceServers ?? p2pCaps?.iceServers ?? [];
+  const { path: finalPath, iceServers: finalIceServers } = resolvePeerConfig(
+    { peerjsPath, iceServers },
+    p2pCaps
+  );
   const peerOpts = buildPeerOptions({
     host,
     port,
@@ -1543,6 +1533,7 @@ export {
   getDefaultBase64,
   getDefaultCrypto,
   getDefaultFetch,
+  getServerInfo,
   importKeyFromBase64,
   isLocalhostHostname,
   isP2PCodeLike,
@@ -1551,6 +1542,7 @@ export {
   makeAbortSignal,
   parseSemverMajorMinor,
   parseServerUrl,
+  resolvePeerConfig,
   sha256Hex,
   sleep,
   startP2PReceive,

@@ -2,7 +2,7 @@ import { DropgateValidationError, DropgateNetworkError } from '../errors.js';
 import { sleep } from '../utils/network.js';
 import type { P2PSendOptions, P2PSendSession, DataConnection } from './types.js';
 import { generateP2PCode } from './utils.js';
-import { buildPeerOptions, createPeerWithRetries } from './helpers.js';
+import { buildPeerOptions, createPeerWithRetries, resolvePeerConfig } from './helpers.js';
 
 /**
  * Start a direct transfer (P2P) sender session.
@@ -40,7 +40,6 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     cryptoObj,
     maxAttempts = 4,
     chunkSize = 256 * 1024,
-    readyTimeoutMs = 8000,
     endAckTimeoutMs = 15000,
     bufferHighWaterMark = 8 * 1024 * 1024,
     bufferLowWaterMark = 2 * 1024 * 1024,
@@ -68,9 +67,11 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     throw new DropgateValidationError('Direct transfer is disabled on this server.');
   }
 
-  // Determine options (use serverInfo if available)
-  const finalPath = peerjsPath ?? p2pCaps?.peerjsPath ?? '/peerjs';
-  const finalIceServers = iceServers ?? p2pCaps?.iceServers ?? [];
+  // Resolve config from user options and server capabilities
+  const { path: finalPath, iceServers: finalIceServers } = resolvePeerConfig(
+    { peerjsPath, iceServers },
+    p2pCaps
+  );
 
   // Build peer options
   const peerOpts = buildPeerOptions({
@@ -211,7 +212,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
         }
 
         // Wait for ready signal
-        await Promise.race([readyPromise, sleep(readyTimeoutMs).catch(() => null)]);
+        await readyPromise;
 
         // Send file in chunks
         for (let offset = 0; offset < total; offset += chunkSize) {
