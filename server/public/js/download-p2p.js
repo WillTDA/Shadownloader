@@ -14,8 +14,6 @@ const elDownloadBtn = document.getElementById('download-button');
 const elProgressContainer = document.getElementById('progress-container');
 const card = document.getElementById('status-card');
 const iconContainer = document.getElementById('icon-container');
-const elTrustStatement = document.getElementById('trust-statement');
-const elHowItWorks = document.getElementById('how-it-works');
 
 retryBtn?.addEventListener('click', () => location.reload());
 
@@ -54,7 +52,6 @@ const showError = (title, message) => {
   elActions.hidden = false;
   elBytes.hidden = true;
   elBar.parentElement.hidden = true;
-  elTrustStatement.style.display = 'none';
   card?.classList.remove('border-primary', 'border-success');
   card?.classList.add('border', 'border-danger');
   if (iconContainer) {
@@ -181,8 +178,6 @@ async function start() {
         elFileSize.textContent = formatBytes(total);
         elFileDetails.style.display = 'block';
         elDownloadBtn.style.display = 'inline-block';
-        elTrustStatement.style.display = 'block';
-        elHowItWorks.style.display = 'none';
         
         card?.classList.remove('border-primary');
 

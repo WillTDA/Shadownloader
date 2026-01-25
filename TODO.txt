@@ -1,5 +1,5 @@
 FIX P2P PLEEEEEEASE BEFORE 2.1.0
 
-- Add onStatus update for "waiting", and have the message be "Connected. Waiting for receiver to accept..."
-- The peer connection/disconnection handling is terrible at the moment. Revamp the send and recieve to be better at handling and presenting states, and ensure the web UI is updated to handle these states accordingly.
+- Add onStatus update for "waiting", and have the message be "Connected. Waiting for receiver to accept...". Remember to update type defs and the web UI implementation of the P2P APIs.
+- The peer connection/disconnection handling is terrible at the moment. Revamp the send and recieve to be better at handling and presenting states and edge cases, and ensure the web UI is updated to handle these states accordingly.
 - Fix webui-main.js onError consistency (icon and border should both be danger). In fact, refactor status card states on all ejs pages to use a central module to handle icon, colour and border colour. Some CSS might become unnecessary when you do this, so double-check through CSS to look for anything you could remove/refactor there too.
