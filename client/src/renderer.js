@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const fileLifetimeUnitSelect = document.getElementById('file-lifetime-unit');
         const encryptCheckbox = document.getElementById('encrypt-checkbox');
         const uploadBtn = document.getElementById('upload-btn');
+        const cancelUploadBtn = document.getElementById('cancel-upload-btn');
         const uploadStatus = document.getElementById('upload-status');
         const progressBar = document.getElementById('progress-bar');
         const linkSection = document.getElementById('link-section');
@@ -29,6 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         let selectedFile = null;
         /** @type {{compatible:boolean, message?:string}} */
         let lastServerCheck = { compatible: false, message: '' };
+        let activeUploadSession = null;
 
         // --- Core client (shared logic for Electron + Web UI) ---
         const clientVersion = await window.electronAPI.getClientVersion();
@@ -346,7 +348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             try {
                 const serverTarget = parseServerUrl(serverUrlInput.value.trim());
-                const result = await coreClient.uploadFile({
+                const session = await coreClient.uploadFile({
                     ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
@@ -356,11 +358,47 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (evt?.text) payload.text = evt.text;
                         if (evt?.percent !== undefined) payload.percent = evt.percent;
                         if (Object.keys(payload).length) window.electronAPI.uploadProgress(payload);
+                    },
+                    onCancel: () => {
+                        uploadStatus.textContent = 'Upload cancelled.';
+                        uploadStatus.className = 'form-text mt-1 text-warning';
+                        // Swap buttons back
+                        uploadBtn.style.display = 'block';
+                        cancelUploadBtn.style.display = 'none';
+                        activeUploadSession = null;
+                        resetUI(false);
                     }
                 });
 
+                // Store session and swap buttons
+                activeUploadSession = session;
+                uploadBtn.style.display = 'none';
+                cancelUploadBtn.style.display = 'block';
+
+                // Wire up cancel button
+                cancelUploadBtn.onclick = () => {
+                    if (activeUploadSession) {
+                        activeUploadSession.cancel('User cancelled upload.');
+                        activeUploadSession = null;
+                        cancelUploadBtn.style.display = 'none';
+                        uploadBtn.style.display = 'block';
+                    }
+                };
+
+                const result = await session.result;
+
+                // Swap buttons back on success
+                uploadBtn.style.display = 'block';
+                cancelUploadBtn.style.display = 'none';
+                activeUploadSession = null;
+
                 window.electronAPI.uploadFinished({ status: 'success', link: result.downloadUrl });
             } catch (error) {
+                // Swap buttons back on error
+                uploadBtn.style.display = 'block';
+                cancelUploadBtn.style.display = 'none';
+                activeUploadSession = null;
+
                 window.electronAPI.uploadFinished({
                     status: 'error',
                     error: error?.message || String(error)

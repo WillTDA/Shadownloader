@@ -14,6 +14,7 @@ import type {
   CompatibilityResult,
   ShareTargetResult,
   UploadResult,
+  UploadSession,
   UploadProgressEvent,
   DropgateClientOptions,
   UploadOptions,
@@ -333,7 +334,7 @@ export class DropgateClient {
    * @throws {DropgateProtocolError} If the server returns an error.
    * @throws {DropgateAbortError} If the upload is cancelled.
    */
-  async uploadFile(opts: UploadOptions): Promise<UploadResult> {
+  async uploadFile(opts: UploadOptions): Promise<UploadSession> {
     const {
       host,
       port,
@@ -343,10 +344,22 @@ export class DropgateClient {
       encrypt,
       filenameOverride,
       onProgress,
+      onCancel,
       signal,
       timeouts = {},
       retry = {},
     } = opts;
+
+    // Create internal AbortController if no signal provided
+    const internalController = signal ? null : new AbortController();
+    const effectiveSignal = signal || internalController?.signal;
+
+    let uploadState: 'initializing' | 'uploading' | 'completing' | 'completed' | 'cancelled' | 'error' = 'initializing';
+    let currentUploadId: string | null = null;
+    let currentBaseUrl: string | null = null;
+
+    const uploadPromise = (async (): Promise<UploadResult> => {
+      try {
 
     const progress = (evt: UploadProgressEvent): void => {
       try {
@@ -372,7 +385,7 @@ export class DropgateClient {
       port,
       secure,
       timeoutMs: timeouts.serverInfoMs ?? 5000,
-      signal,
+      signal: effectiveSignal,
     });
 
     const { baseUrl, serverInfo } = compat;
@@ -435,7 +448,7 @@ export class DropgateClient {
     const initRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/init`, {
       method: 'POST',
       timeoutMs: timeouts.initMs ?? 15000,
-      signal,
+      signal: effectiveSignal,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
@@ -461,6 +474,11 @@ export class DropgateClient {
       );
     }
 
+    // Store uploadId and baseUrl for cancellation
+    currentUploadId = uploadId;
+    currentBaseUrl = baseUrl;
+    uploadState = 'uploading';
+
     // 5) Chunks
     const retries = Number.isFinite(retry.retries) ? retry.retries! : 5;
     const baseBackoffMs = Number.isFinite(retry.backoffMs)
@@ -471,8 +489,8 @@ export class DropgateClient {
       : 30000;
 
     for (let i = 0; i < totalChunks; i++) {
-      if (signal?.aborted) {
-        throw signal.reason || new DropgateAbortError();
+      if (effectiveSignal?.aborted) {
+        throw effectiveSignal.reason || new DropgateAbortError();
       }
 
       const start = i * this.chunkSize;
@@ -533,7 +551,7 @@ export class DropgateClient {
           backoffMs: baseBackoffMs,
           maxBackoffMs,
           timeoutMs: timeouts.chunkMs ?? 60000,
-          signal,
+          signal: effectiveSignal,
           progress,
           chunkIndex: i,
           totalChunks,
@@ -546,13 +564,14 @@ export class DropgateClient {
     // 6) Complete
     progress({ phase: 'complete', text: 'Finalising upload...', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
 
+    uploadState = 'completing';
     const completeRes = await fetchJson(
       this.fetchFn,
       `${baseUrl}/upload/complete`,
       {
         method: 'POST',
         timeoutMs: timeouts.completeMs ?? 30000,
-        signal,
+        signal: effectiveSignal,
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
@@ -584,12 +603,59 @@ export class DropgateClient {
 
     progress({ phase: 'done', text: 'Upload successful!', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
 
+    uploadState = 'completed';
     return {
       downloadUrl,
       fileId,
       uploadId,
       baseUrl,
       ...(encrypt && keyB64 ? { keyB64 } : {}),
+    };
+      } catch (err) {
+        // Handle abort/cancellation
+        if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('abort'))) {
+          uploadState = 'cancelled';
+          onCancel?.();
+        } else {
+          uploadState = 'error';
+        }
+        throw err;
+      }
+    })();
+
+    // Create cancel endpoint caller
+    const callCancelEndpoint = async (uploadId: string, baseUrl: string): Promise<void> => {
+      try {
+        await fetchJson(this.fetchFn, `${baseUrl}/upload/cancel`, {
+          method: 'POST',
+          timeoutMs: 5000,
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ uploadId }),
+        });
+      } catch {
+        // Best effort - ignore cancellation endpoint errors
+      }
+    };
+
+    // Return session object
+    return {
+      result: uploadPromise,
+      cancel: (reason?: string) => {
+        if (uploadState === 'completed' || uploadState === 'cancelled') return;
+        uploadState = 'cancelled';
+
+        // Call server cancel endpoint if uploadId exists
+        if (currentUploadId && currentBaseUrl) {
+          callCancelEndpoint(currentUploadId, currentBaseUrl).catch(() => {});
+        }
+
+        // Abort the controller with a proper error object so AbortError checks work
+        internalController?.abort(new DropgateAbortError(reason || 'Upload cancelled by user.'));
+      },
+      getStatus: () => uploadState,
     };
   }
 

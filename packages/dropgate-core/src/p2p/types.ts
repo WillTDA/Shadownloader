@@ -15,6 +15,7 @@ export type P2PSendState =
   | 'transferring'  // Actively sending file data
   | 'finishing'     // Sent end message, waiting for ack
   | 'completed'     // Transfer successful
+  | 'cancelled'     // Transfer cancelled by user
   | 'closed';       // Session ended (success, error, or stopped)
 
 /**
@@ -26,6 +27,7 @@ export type P2PReceiveState =
   | 'negotiating'   // Connected, waiting for metadata
   | 'transferring'  // Actively receiving file data
   | 'completed'     // Transfer successful
+  | 'cancelled'     // Transfer cancelled by user
   | 'closed';       // Session ended (success, error, or stopped)
 
 // ============================================================================
@@ -157,6 +159,14 @@ export interface P2PReceiveCompleteEvent {
   total: number;
 }
 
+/** Cancellation event for P2P operations. */
+export interface P2PCancellationEvent {
+  /** Who cancelled the transfer ('sender' or 'receiver'). */
+  cancelledBy: 'sender' | 'receiver';
+  /** Optional cancellation message. */
+  message?: string;
+}
+
 // ============================================================================
 // P2P Send Options
 // ============================================================================
@@ -199,6 +209,8 @@ export interface P2PSendOptions extends P2PServerConfig {
   onError?: (err: Error) => void;
   /** Callback when receiver disconnects. */
   onDisconnect?: () => void;
+  /** Callback when transfer is cancelled by either party. */
+  onCancel?: (evt: P2PCancellationEvent) => void;
 }
 
 /**
@@ -265,6 +277,8 @@ export interface P2PReceiveOptions extends P2PServerConfig {
   onError?: (err: Error) => void;
   /** Callback when sender disconnects. */
   onDisconnect?: () => void;
+  /** Callback when transfer is cancelled by either party. */
+  onCancel?: (evt: P2PCancellationEvent) => void;
 }
 
 /**

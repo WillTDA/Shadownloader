@@ -1,3 +1,8 @@
+process.env.ENABLE_UPLOAD = true;
+process.env.UPLOAD_MAX_FILE_SIZE_MB = 1000000;
+process.env.UPLOAD_MAX_STORAGE_GB = 1000000;
+process.env.LOG_LEVEL = 'DEBUG';
+
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
     const upper = String(value || '').trim().toUpperCase();
@@ -406,6 +411,28 @@ if (enableUpload) {
 
         log('debug', `Initialised upload. Reserved ${(size / 1000 / 1000).toFixed(2)} MB.`);
         res.status(200).json({ uploadId });
+    });
+
+    uploadRouter.post('/cancel', uploadAuth, (req, res) => {
+        const { uploadId } = req.body;
+        if (!ongoingUploads.has(uploadId)) {
+            return res.status(404).json({ error: 'Upload session not found or already expired.' });
+        }
+
+        const session = ongoingUploads.get(uploadId);
+
+        // Clean up temp file
+        try {
+            fs.rmSync(session.tempFilePath, { force: true });
+        } catch (e) {
+            log('debug', `Failed to delete temp file during cancellation: ${e.message}`);
+        }
+
+        // Remove from ongoing uploads (releases reservation)
+        ongoingUploads.delete(uploadId);
+
+        log('debug', `Upload cancelled by client. Released ${(session.reservedBytes / 1000 / 1000).toFixed(2)} MB.`);
+        res.status(200).json({ success: true });
     });
 
     uploadRouter.post('/chunk', uploadAuth, (req, res) => {

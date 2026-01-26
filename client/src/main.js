@@ -401,6 +401,16 @@ ipcMain.on('upload-finished', (event, result) => {
     }
 });
 
+ipcMain.on('cancel-upload', (event) => {
+    log('Cancel upload requested');
+
+    // Forward cancellation trigger to the renderer that requested it
+    const uploaderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (uploaderWindow && !uploaderWindow.isDestroyed()) {
+        uploaderWindow.webContents.send('cancel-upload-trigger');
+    }
+});
+
 ipcMain.handle('get-settings', () => {
     return {
         serverURL: store.get('serverURL', ''),

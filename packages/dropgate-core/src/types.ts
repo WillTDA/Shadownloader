@@ -100,6 +100,19 @@ export interface UploadResult {
 }
 
 /**
+ * Upload session with cancellation support.
+ * Returned by uploadFile() to allow cancelling uploads in progress.
+ */
+export interface UploadSession {
+  /** Promise that resolves with upload result when complete. */
+  result: Promise<UploadResult>;
+  /** Cancel the upload. */
+  cancel: (reason?: string) => void;
+  /** Get current upload status. */
+  getStatus: () => 'initializing' | 'uploading' | 'completing' | 'completed' | 'cancelled' | 'error';
+}
+
+/**
  * Result of a client/server compatibility check.
  */
 export interface CompatibilityResult {
@@ -233,6 +246,8 @@ export interface UploadOptions extends ServerTarget {
   filenameOverride?: string;
   /** Callback for progress updates. */
   onProgress?: (evt: UploadProgressEvent) => void;
+  /** Callback when upload is cancelled by user. */
+  onCancel?: () => void;
   /** AbortSignal to cancel the upload. */
   signal?: AbortSignal;
   /** Timeout settings for various upload phases. */

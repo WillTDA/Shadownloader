@@ -12,6 +12,7 @@ const elFileDetails = document.getElementById('file-details');
 const elFileName = document.getElementById('file-name');
 const elFileSize = document.getElementById('file-size');
 const elDownloadBtn = document.getElementById('download-button');
+const elCancelBtn = document.getElementById('cancel-button');
 const elProgressContainer = document.getElementById('progress-container');
 const card = document.getElementById('status-card');
 const iconContainer = document.getElementById('icon-container');
@@ -26,6 +27,7 @@ let transferCompleted = false;
 let writer = null;
 let pendingSendReady = null;
 let fileName = null;
+let p2pSession = null;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -92,6 +94,7 @@ function startDownload() {
 
   elDownloadBtn.style.display = 'none';
   elProgressContainer.style.display = 'block';
+  elCancelBtn.style.display = 'inline-block';
 
   updateStatusCard({
     card,
@@ -109,6 +112,15 @@ function startDownload() {
     const stream = window.streamSaver.createWriteStream(fileName, total ? { size: total } : undefined);
     writer = stream.getWriter();
   }
+
+  // Wire up cancel button
+  elCancelBtn.onclick = () => {
+    if (p2pSession) {
+      p2pSession.stop();
+      p2pSession = null;
+    }
+    elCancelBtn.style.display = 'none';
+  };
 
   // Signal the sender that we're ready to receive
   pendingSendReady();
@@ -156,7 +168,7 @@ async function start() {
   const iceServers = Array.isArray(p2p.iceServers) ? p2p.iceServers : [];
 
   try {
-    await startP2PReceive({
+    p2pSession = await startP2PReceive({
       code,
       Peer,
       host: location.hostname,
@@ -231,6 +243,8 @@ async function start() {
         elMeta.textContent = 'The file has been saved to your downloads.';
         elMeta.hidden = false;
         elFileDetails.style.display = 'none';
+        elCancelBtn.style.display = 'none';
+        p2pSession = null;
       },
       onError: (err) => {
         if (transferCompleted) return;
@@ -245,6 +259,9 @@ async function start() {
           }
           writer = null;
         }
+
+        elCancelBtn.style.display = 'none';
+        p2pSession = null;
 
         if (err?.message?.startsWith('Could not connect to peer')) {
           showError('Connection Failed', 'Could not connect to the sender. Check the code, ensure the sender is online, and try again.');
@@ -265,7 +282,34 @@ async function start() {
           writer = null;
         }
 
+        elCancelBtn.style.display = 'none';
+        p2pSession = null;
         showError('Disconnected', 'The sender disconnected before the transfer finished.');
+      },
+      onCancel: (evt) => {
+        if (transferCompleted) return;
+
+        // Abort the writer on cancellation
+        if (writer) {
+          try {
+            writer.abort();
+          } catch {
+            // Ignore abort errors
+          }
+          writer = null;
+        }
+
+        elCancelBtn.style.display = 'none';
+        p2pSession = null;
+
+        // Show appropriate message based on who cancelled
+        const message = evt.cancelledBy === 'sender'
+          ? 'The sender cancelled the transfer.'
+          : 'You cancelled the transfer.';
+        showError('Transfer Cancelled', message);
+
+        // Hide retry button on cancellation
+        elActions.hidden = true;
       },
     });
   } catch (err) {

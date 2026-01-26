@@ -44,6 +44,8 @@ const els = {
   progressSub: $('progressSub'),
   progressFill: $('progressFill'),
   progressBytes: $('progressBytes'),
+  cancelStandardUpload: $('cancelStandardUpload'),
+  cancelP2PSend: $('cancelP2PSend'),
 
   p2pWaitCard: $('p2pWaitCard'),
   p2pCode: $('p2pCode'),
@@ -87,9 +89,10 @@ const state = {
   iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
   p2pSession: null,
   p2pSecureOk: true,
+  uploadSession: null,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '2.1.0' });
+const coreClient = new DropgateClient({ clientVersion: '2.2.0' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -545,7 +548,7 @@ async function startStandardUpload() {
   showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
-    const result = await coreClient.uploadFile({
+    const session = await coreClient.uploadFile({
       host: location.hostname,
       port: location.port ? Number(location.port) : undefined,
       secure: location.protocol === 'https:',
@@ -564,11 +567,42 @@ async function startStandardUpload() {
           iconColor: 'text-primary',
         });
       },
+      onCancel: () => {
+        showToast('Upload cancelled.', 'warning');
+        resetToMain();
+      },
     });
+
+    // Store session and show cancel button
+    state.uploadSession = session;
+    els.cancelStandardUpload.style.display = 'inline-block';
+
+    // Wire up cancel button
+    els.cancelStandardUpload.onclick = () => {
+      session.cancel('User cancelled upload.');
+      state.uploadSession = null;
+      els.cancelStandardUpload.style.display = 'none';
+    };
+
+    const result = await session.result;
+
+    // Hide cancel button on success
+    els.cancelStandardUpload.style.display = 'none';
+    state.uploadSession = null;
 
     showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
     showShare({ link: result.downloadUrl });
   } catch (err) {
+    // Hide cancel button on error
+    els.cancelStandardUpload.style.display = 'none';
+    state.uploadSession = null;
+
+    // Check if it was a cancellation (handle both native AbortError and DropgateAbortError)
+    if (err?.name === 'AbortError' || err?.code === 'ABORT_ERROR') {
+      // Already handled by onCancel
+      return;
+    }
+
     console.error(err);
     showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
     showToast(err?.message || 'Upload failed.');
@@ -659,6 +693,9 @@ async function startP2PSendFlow() {
       } else if (phase === 'transferring') {
         // Switch to progress card when transfer actually starts
         showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+        // Show P2P cancel button
+        els.cancelP2PSend.style.display = 'inline-block';
+        els.cancelStandardUpload.style.display = 'none';
       } else {
         // Default behavior for other statuses
         showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
@@ -668,6 +705,7 @@ async function startP2PSendFlow() {
       showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: processedBytes, totalBytes, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
+      els.cancelP2PSend.style.display = 'none';
       stopP2P();
       showShare({
         title: 'Transfer Complete',
@@ -677,12 +715,23 @@ async function startP2PSendFlow() {
     },
     onError: (err) => {
       console.error(err);
+      els.cancelP2PSend.style.display = 'none';
       showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
       stopP2P();
     },
     onDisconnect: () => {
+      els.cancelP2PSend.style.display = 'none';
       showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'link_off', iconColor: 'text-warning' });
       stopP2P();
+    },
+    onCancel: (evt) => {
+      els.cancelP2PSend.style.display = 'none';
+      stopP2P();
+      const msg = evt?.cancelledBy === 'receiver'
+        ? 'The receiver cancelled the transfer.'
+        : 'Transfer cancelled.';
+      showToast(msg, 'warning');
+      resetToMain();
     },
   });
 
@@ -690,7 +739,13 @@ async function startP2PSendFlow() {
   els.qrP2PLink.onclick = () => showQRModal(els.p2pLink.value);
   els.cancelP2P.onclick = () => {
     stopP2P();
+    showToast('Transfer cancelled.', 'warning');
     resetToMain();
+  };
+  els.cancelP2PSend.onclick = () => {
+    if (state.p2pSession) {
+      state.p2pSession.stop();
+    }
   };
 }
 
