@@ -18,6 +18,7 @@
   "build": {
     "appId": "com.diamonddigitaldev.dropgateclient",
     "productName": "Dropgate Client",
+    "artifactName": "Dropgate-Client-Setup-${version}.${ext}",
     "files": [
       "**/*"
     ],
