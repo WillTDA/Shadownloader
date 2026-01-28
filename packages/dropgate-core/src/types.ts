@@ -240,8 +240,8 @@ export interface UploadOptions extends ServerTarget {
   file: FileSource;
   /** File lifetime in milliseconds (0 = server default). */
   lifetimeMs: number;
-  /** Whether to encrypt the file with E2EE. */
-  encrypt: boolean;
+  /** Whether to encrypt the file with E2EE. Defaults to true if server supports E2EE. */
+  encrypt?: boolean;
   /** Override the filename sent to the server. */
   filenameOverride?: string;
   /** Callback for progress updates. */
@@ -292,8 +292,8 @@ export interface ValidateUploadOptions {
   file: FileSource;
   /** Requested file lifetime in milliseconds. */
   lifetimeMs: number;
-  /** Whether encryption will be used. */
-  encrypt: boolean;
+  /** Whether encryption will be used. Defaults to true if server supports E2EE. */
+  encrypt?: boolean;
   /** Server info containing capabilities to validate against. */
   serverInfo: ServerInfo;
 }

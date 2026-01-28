@@ -507,7 +507,7 @@ var DropgateClient = class {
     }
     if (encrypt && !caps.e2ee) {
       throw new DropgateValidationError(
-        "Server does not support end-to-end encryption."
+        "End-to-end encryption is not supported on this server."
       );
     }
     return true;
@@ -569,14 +569,16 @@ var DropgateClient = class {
           throw new DropgateValidationError(compat.message);
         }
         const filename = filenameOverride ?? file.name ?? "file";
-        if (!encrypt) {
+        const serverSupportsE2EE = Boolean(serverInfo?.capabilities?.upload?.e2ee);
+        const effectiveEncrypt = encrypt ?? serverSupportsE2EE;
+        if (!effectiveEncrypt) {
           validatePlainFilename(filename);
         }
-        this.validateUploadInputs({ file, lifetimeMs, encrypt, serverInfo });
+        this.validateUploadInputs({ file, lifetimeMs, encrypt: effectiveEncrypt, serverInfo });
         let cryptoKey = null;
         let keyB64 = null;
         let transmittedFilename = filename;
-        if (encrypt) {
+        if (effectiveEncrypt) {
           progress({ phase: "crypto", text: "Generating encryption key...", percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
           try {
             cryptoKey = await generateAesGcmKey(this.cryptoObj);
@@ -597,13 +599,13 @@ var DropgateClient = class {
         const totalUploadSize = estimateTotalUploadSizeBytes(
           file.size,
           totalChunks,
-          encrypt
+          effectiveEncrypt
         );
         progress({ phase: "init", text: "Reserving server storage...", percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
         const initPayload = {
           filename: transmittedFilename,
           lifetime: lifetimeMs,
-          isEncrypted: Boolean(encrypt),
+          isEncrypted: effectiveEncrypt,
           totalSize: totalUploadSize,
           totalChunks
         };
@@ -657,7 +659,7 @@ var DropgateClient = class {
           });
           const chunkBuffer = await chunkBlob.arrayBuffer();
           let uploadBlob;
-          if (encrypt && cryptoKey) {
+          if (effectiveEncrypt && cryptoKey) {
             uploadBlob = await encryptToBlob(this.cryptoObj, chunkBuffer, cryptoKey);
           } else {
             uploadBlob = new Blob([chunkBuffer]);
@@ -728,7 +730,7 @@ var DropgateClient = class {
           );
         }
         let downloadUrl = `${baseUrl}/${fileId}`;
-        if (encrypt && keyB64) {
+        if (effectiveEncrypt && keyB64) {
           downloadUrl += `#${keyB64}`;
         }
         progress({ phase: "done", text: "Upload successful!", percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
@@ -738,7 +740,7 @@ var DropgateClient = class {
           fileId,
           uploadId,
           baseUrl,
-          ...encrypt && keyB64 ? { keyB64 } : {}
+          ...effectiveEncrypt && keyB64 ? { keyB64 } : {}
         };
       } catch (err) {
         if (err instanceof Error && (err.name === "AbortError" || err.message?.includes("abort"))) {

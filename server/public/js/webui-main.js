@@ -29,9 +29,12 @@ const els = {
   lifetimeUnit: $('lifetimeUnit'),
   lifetimeHelp: $('lifetimeHelp'),
 
-  optEncrypt: $('optEncrypt'),
-  encYes: $('encYes'),
-  encNo: $('encNo'),
+  securityStatus: $('securityStatus'),
+  securityIcon: $('securityIcon'),
+  securityText: $('securityText'),
+  insecureUploadModal: $('insecureUploadModal'),
+  insecureModalBody: $('insecureModalBody'),
+  confirmInsecureUpload: $('confirmInsecureUpload'),
 
   p2pInfo: $('p2pInfo'),
   startBtn: $('startBtn'),
@@ -230,7 +233,7 @@ function setMode(mode) {
 
   // Options shown in Standard mode
   setHidden(els.optLifetime, !isStandard);
-  setHidden(els.optEncrypt, !isStandard);
+  updateSecurityStatus();
   setHidden(els.p2pInfo, isStandard);
 
   if (isStandard) {
@@ -251,6 +254,84 @@ function setMode(mode) {
   }
 
   updateStartEnabled();
+}
+
+/**
+ * Update the security status card based on E2EE and HTTPS availability.
+ */
+function updateSecurityStatus() {
+  const icon = els.securityIcon;
+  const text = els.securityText;
+  const card = els.securityStatus;
+
+  if (!icon || !text || !card) return;
+
+  // Hide if uploads are disabled or in P2P mode
+  if (!state.uploadEnabled || state.mode === 'p2p') {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'flex'; // Ensure it's visible otherwise
+
+  const isHttps = location.protocol === 'https:';
+  const hasE2EE = state.uploadEnabled && state.e2ee && window.isSecureContext;
+
+  if (hasE2EE) {
+    // Green: Full E2EE
+    icon.textContent = 'verified';
+    icon.className = 'material-icons-round text-success';
+    text.textContent = 'Your upload will be end-to-end encrypted.';
+    card.className = 'security-status-card security-green mb-3';
+  } else if (isHttps) {
+    // Yellow: HTTPS but no E2EE
+    icon.textContent = 'warning';
+    icon.className = 'material-icons-round text-warning';
+    text.textContent = "This server doesn't support encryption. Your upload is protected in transit via HTTPS.";
+    card.className = 'security-status-card security-yellow mb-3';
+  } else {
+    // Red: HTTP, no encryption at all
+    icon.textContent = 'gpp_bad';
+    icon.className = 'material-icons-round text-danger';
+    text.textContent = 'This connection is not secure. Your upload will not be encrypted.';
+    card.className = 'security-status-card security-red mb-3';
+  }
+}
+
+/**
+ * Show the insecure upload warning modal and return a promise.
+ * @returns {Promise<boolean>} True if user confirms, false if cancelled.
+ */
+function showInsecureUploadModal() {
+  return new Promise((resolve) => {
+    const modalEl = els.insecureUploadModal;
+    if (!modalEl) {
+      resolve(true); // If modal doesn't exist, proceed anyway
+      return;
+    }
+
+    const modal = new window.bootstrap.Modal(modalEl);
+
+    const cleanup = () => {
+      els.confirmInsecureUpload?.removeEventListener('click', onConfirm);
+      modalEl.removeEventListener('hidden.bs.modal', onHide);
+    };
+
+    const onConfirm = () => {
+      cleanup();
+      modal.hide();
+      resolve(true);
+    };
+
+    const onHide = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    els.confirmInsecureUpload?.addEventListener('click', onConfirm, { once: true });
+    modalEl.addEventListener('hidden.bs.modal', onHide, { once: true });
+
+    modal.show();
+  });
 }
 
 function updateCapabilitiesUI() {
@@ -287,31 +368,10 @@ function updateCapabilitiesUI() {
     }
   }
 
-  // Encryption
+  // Security status (auto-enable encryption based on server capabilities)
   const canEncrypt = state.uploadEnabled && state.e2ee && window.isSecureContext;
-  const encMessage = $('encryptionMessage');
-  if (encMessage) {
-    if (state.uploadEnabled && state.e2ee && !window.isSecureContext) {
-      encMessage.textContent = 'Encryption requires HTTPS.';
-      encMessage.className = 'encryption-message text-warning';
-    } else if (state.uploadEnabled && !state.e2ee) {
-      encMessage.textContent = 'End-to-End Encryption is not supported on this server.';
-      encMessage.className = 'encryption-message text-body-secondary';
-    } else if (canEncrypt) {
-      encMessage.textContent = 'End-to-End Encryption is available.';
-      encMessage.className = 'encryption-message text-success';
-    } else if (!state.uploadEnabled) {
-      encMessage.textContent = '';
-      encMessage.className = 'encryption-message';
-    }
-  }
-  if (!canEncrypt) {
-    state.encrypt = false;
-    setSelected(els.encYes, els.encNo, false);
-    setDisabled(els.encYes, true);
-  } else {
-    setDisabled(els.encYes, false);
-  }
+  state.encrypt = canEncrypt; // Auto-set encryption based on capability
+  updateSecurityStatus();
 
   // Mode toggle availability
   const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
@@ -520,7 +580,15 @@ async function startStandardUpload() {
   }
 
   els.tagline.textContent = 'Standard Upload';
-  const encrypt = Boolean(state.encrypt);
+
+  // Check if E2EE is available - show warning if not
+  const hasE2EE = state.uploadEnabled && state.e2ee && window.isSecureContext;
+  if (!hasE2EE) {
+    const confirmed = await showInsecureUploadModal();
+    if (!confirmed) return;
+  }
+
+  const encrypt = hasE2EE; // Auto-set encryption based on capability
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
     ? state.maxSizeMB * 1000 * 1000
     : null;
@@ -793,22 +861,6 @@ function wireUI() {
   els.modeP2P?.addEventListener('click', () => {
     if (els.modeP2P.hasAttribute('disabled')) return;
     setMode('p2p');
-  });
-
-  // Encryption
-  els.encYes?.addEventListener('click', () => {
-    if (!(state.uploadEnabled && state.e2ee && window.isSecureContext)) {
-      showToast('Encryption requires HTTPS and server support.');
-      return;
-    }
-    state.encrypt = true;
-    setSelected(els.encYes, els.encNo, true);
-    if (state.file) handleFileSelection(state.file);
-  });
-  els.encNo?.addEventListener('click', () => {
-    state.encrypt = false;
-    setSelected(els.encYes, els.encNo, false);
-    if (state.file) handleFileSelection(state.file);
   });
 
   // Lifetime input - mirror Electron behavior

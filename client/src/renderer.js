@@ -17,7 +17,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const connectionStatus = document.getElementById('connection-status');
         const fileLifetimeValueInput = document.getElementById('file-lifetime-value');
         const fileLifetimeUnitSelect = document.getElementById('file-lifetime-unit');
-        const encryptCheckbox = document.getElementById('encrypt-checkbox');
+
+        // Custom E2EE UI
+        const securityStatus = document.getElementById('security-status');
+        const securityIcon = document.getElementById('security-icon');
+        const securityText = document.getElementById('security-text');
+        const insecureUploadModal = document.getElementById('insecure-upload-modal');
+        const confirmInsecureBtn = document.getElementById('confirm-insecure-upload');
         const uploadBtn = document.getElementById('upload-btn');
         const cancelUploadBtn = document.getElementById('cancel-upload-btn');
         const uploadStatus = document.getElementById('upload-status');
@@ -243,7 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.log('File size:', details.data.byteLength, 'bytes');
                 const file = new File([details.data], details.name);
                 selectedFile = file;
-                encryptCheckbox.checked = details.useE2EE || false;
+                // Encryption is auto-determined by server capabilities later
 
                 const settings = await window.electronAPI.getSettings();
                 console.log('Settings loaded:', settings);
@@ -330,18 +336,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            const useEncryption = encryptCheckbox.checked;
+            const serverUrl = serverUrlInput.value.trim();
+            const isTargetSecure = serverUrl.startsWith('https://');
+            const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
 
-            // UI-side checks (core also validates, but these give instant feedback)
-            if (serverCapabilities?.upload) {
-                if (useEncryption && !serverCapabilities.upload.e2ee) {
+            // Check if E2EE is available - show warning if not
+            if (!hasE2EE) {
+                const confirmed = await showInsecureUploadModal();
+                if (!confirmed) {
                     window.electronAPI.uploadFinished({
                         status: 'error',
-                        error: 'Server does not support end-to-end encryption.'
+                        error: 'Upload cancelled by user (insecure connection).'
                     });
                     return;
                 }
             }
+
+            const encrypt = hasE2EE; // Auto-set encryption based on capability
 
             const lifetimeMs = getLifetimeInMs();
             saveSettings();
@@ -352,7 +363,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
-                    encrypt: useEncryption,
+                    encrypt: encrypt,
                     onProgress: (evt) => {
                         const payload = {};
                         if (evt?.text) payload.text = evt.text;
@@ -408,6 +419,79 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // --- Utility Functions ---
 
+        /**
+         * Update the security status card based on E2EE and HTTPS availability.
+         */
+        function updateSecurityStatus() {
+            if (!securityStatus || !securityIcon || !securityText) return;
+            // Electron context note: window.isSecureContext can be true for localhost http,
+            // but for real security we care about HTTPS or just trusting the capability check context if local.
+            // For simplicity, we trust the server capability flag + check protocol if remote.
+
+            // In Electron renderer, location.protocol serves file:// usually or http/https if loaded remotely.
+            // But here we are making requests to 'serverUrlInput.value'.
+            // So we need to check the active server URL protocol.
+            const serverUrl = serverUrlInput.value.trim();
+            const isTargetSecure = serverUrl.startsWith('https://');
+            const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
+
+            if (hasE2EE) {
+                // Green: Full E2EE
+                securityIcon.textContent = 'verified';
+                securityIcon.className = 'material-icons-round text-success';
+                securityText.textContent = 'Your upload will be end-to-end encrypted.';
+                securityStatus.className = 'security-status-card security-green mb-3';
+            } else if (isTargetSecure) {
+                // Yellow: HTTPS but no E2EE
+                securityIcon.textContent = 'warning';
+                securityIcon.className = 'material-icons-round text-warning';
+                securityText.textContent = "This server doesn't support encryption. Your upload is protected in transit via HTTPS.";
+                securityStatus.className = 'security-status-card security-yellow mb-3';
+            } else {
+                // Red: HTTP, no encryption at all
+                securityIcon.textContent = 'gpp_bad';
+                securityIcon.className = 'material-icons-round text-danger';
+                securityText.textContent = 'This connection is not secure. Your upload will not be encrypted.';
+                securityStatus.className = 'security-status-card security-red mb-3';
+            }
+        }
+
+        /**
+         * Show the insecure upload warning modal and return a promise.
+         * @returns {Promise<boolean>} True if user confirms, false if cancelled.
+         */
+        function showInsecureUploadModal() {
+            return new Promise((resolve) => {
+                if (!insecureUploadModal) {
+                    resolve(true);
+                    return;
+                }
+
+                const modal = new bootstrap.Modal(insecureUploadModal);
+
+                const cleanup = () => {
+                    confirmInsecureBtn?.removeEventListener('click', onConfirm);
+                    insecureUploadModal.removeEventListener('hidden.bs.modal', onHide);
+                };
+
+                const onConfirm = () => {
+                    cleanup();
+                    modal.hide();
+                    resolve(true);
+                };
+
+                const onHide = () => {
+                    cleanup();
+                    resolve(false);
+                };
+
+                confirmInsecureBtn?.addEventListener('click', onConfirm, { once: true });
+                insecureUploadModal.addEventListener('hidden.bs.modal', onHide, { once: true });
+
+                modal.show();
+            });
+        }
+
         function saveSettings() {
             window.electronAPI.setSettings({
                 serverURL: serverUrlInput.value,
@@ -436,8 +520,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             try {
-                const serverTarget = parseServerUrl(inputUrl);
-                const compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+                // Auto-detect protocol if missing
+                let targetUrl = inputUrl;
+                let autoAddedProtocol = false;
+
+                if (!inputUrl.match(/^https?:\/\//i)) {
+                    targetUrl = 'https://' + inputUrl;
+                    autoAddedProtocol = true;
+                }
+
+                let serverTarget = parseServerUrl(targetUrl);
+                let compat;
+
+                try {
+                    compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+
+                    // If we auto-added https and it worked, update the input
+                    if (autoAddedProtocol) {
+                        serverUrlInput.value = targetUrl;
+                        // serverTarget is already correct
+                    }
+                } catch (err) {
+                    // If we guessed HTTPS and it failed, try HTTP
+                    if (autoAddedProtocol) {
+                        console.log('HTTPS auto-detect failed, falling back to HTTP...');
+                        targetUrl = 'http://' + inputUrl;
+                        serverTarget = parseServerUrl(targetUrl);
+                        compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+
+                        // If this worked, update the input
+                        serverUrlInput.value = targetUrl;
+                    } else {
+                        // User specified protocol or we failed both
+                        throw err;
+                    }
+                }
 
                 const { serverInfo } = compat;
 
@@ -561,13 +678,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // E2EE toggle
-            if (!serverCapabilities.upload.e2ee) {
-                encryptCheckbox.checked = false;
-                encryptCheckbox.disabled = true;
-            } else {
-                encryptCheckbox.disabled = false;
-            }
+            // Update Security Status UI (Auto-managed E2EE)
+            updateSecurityStatus();
 
             // Re-validate current inputs
             validateLifetimeInput();
