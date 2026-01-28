@@ -62,6 +62,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     onComplete,
     onError,
     onDisconnect,
+    onCancel,
   } = opts;
 
   // Validate required options
@@ -126,9 +127,9 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     onProgress?.({ processedBytes: safeReceived, totalBytes: safeTotal, percent });
   };
 
-  // Safe error handler - prevents calling onError after completion
+  // Safe error handler - prevents calling onError after completion or cancellation
   const safeError = (err: Error): void => {
-    if (state === 'closed' || state === 'completed') return;
+    if (state === 'closed' || state === 'completed' || state === 'cancelled') return;
     state = 'closed';
     onError?.(err);
     cleanup();
@@ -183,14 +184,31 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   }
 
   const stop = (): void => {
-    if (state === 'closed') return;
-    state = 'closed';
+    if (state === 'closed' || state === 'cancelled') return;
+
+    const wasActive = state === 'transferring' || state === 'finishing';
+    state = 'cancelled';
+
+    // Notify peer before cleanup
+    try {
+      // @ts-expect-error - open property may exist on PeerJS connections
+      if (activeConn && activeConn.open) {
+        activeConn.send({ t: 'cancelled', message: 'Sender cancelled the transfer.' });
+      }
+    } catch {
+      // Best effort
+    }
+
+    if (wasActive && onCancel) {
+      onCancel({ cancelledBy: 'sender' });
+    }
+
     cleanup();
   };
 
   // Helper to check if session is stopped - bypasses TypeScript narrowing
   // which doesn't understand state can change asynchronously
-  const isStopped = (): boolean => state === 'closed';
+  const isStopped = (): boolean => state === 'closed' || state === 'cancelled';
 
   peer.on('connection', (conn: DataConnection) => {
     if (state === 'closed') return;
@@ -293,6 +311,14 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
       if (msg.t === 'error') {
         safeError(new DropgateNetworkError(msg.message || 'Receiver reported an error.'));
+        return;
+      }
+
+      if (msg.t === 'cancelled') {
+        if (state === 'cancelled' || state === 'closed' || state === 'completed') return;
+        state = 'cancelled';
+        onCancel?.({ cancelledBy: 'receiver', message: msg.message });
+        cleanup();
       }
     });
 
@@ -345,6 +371,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
           const slice = file.slice(offset, offset + chunkSize);
           const buf = await slice.arrayBuffer();
+          if (isStopped()) return;
           conn.send(buf);
           sentBytes += buf.byteLength;
 
@@ -411,17 +438,19 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     });
 
     conn.on('close', () => {
-      if (state === 'closed' || state === 'completed') {
-        // Clean shutdown, ensure full cleanup
+      if (state === 'closed' || state === 'completed' || state === 'cancelled') {
+        // Clean shutdown or already cancelled, ensure full cleanup
         cleanup();
         return;
       }
 
       if (state === 'transferring' || state === 'finishing') {
-        // Disconnected during transfer
-        safeError(
-          new DropgateNetworkError('Receiver disconnected before transfer completed.')
-        );
+        // Connection closed during active transfer — the receiver either cancelled
+        // or disconnected. Treat as a receiver-initiated cancellation so the UI
+        // can reset cleanly instead of showing a raw error.
+        state = 'cancelled';
+        onCancel?.({ cancelledBy: 'receiver' });
+        cleanup();
       } else {
         // Disconnected before transfer started (during waiting/negotiating phase)
         // Reset state to allow reconnection

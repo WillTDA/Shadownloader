@@ -14,6 +14,7 @@ import type {
   CompatibilityResult,
   ShareTargetResult,
   UploadResult,
+  UploadSession,
   UploadProgressEvent,
   DropgateClientOptions,
   UploadOptions,
@@ -317,7 +318,7 @@ export class DropgateClient {
     // Encryption support
     if (encrypt && !caps.e2ee) {
       throw new DropgateValidationError(
-        'Server does not support end-to-end encryption.'
+        'End-to-end encryption is not supported on this server.'
       );
     }
 
@@ -333,7 +334,7 @@ export class DropgateClient {
    * @throws {DropgateProtocolError} If the server returns an error.
    * @throws {DropgateAbortError} If the upload is cancelled.
    */
-  async uploadFile(opts: UploadOptions): Promise<UploadResult> {
+  async uploadFile(opts: UploadOptions): Promise<UploadSession> {
     const {
       host,
       port,
@@ -341,255 +342,326 @@ export class DropgateClient {
       file,
       lifetimeMs,
       encrypt,
+      maxDownloads,
       filenameOverride,
       onProgress,
+      onCancel,
       signal,
       timeouts = {},
       retry = {},
     } = opts;
 
-    const progress = (evt: UploadProgressEvent): void => {
+    // Create internal AbortController if no signal provided
+    const internalController = signal ? null : new AbortController();
+    const effectiveSignal = signal || internalController?.signal;
+
+    let uploadState: 'initializing' | 'uploading' | 'completing' | 'completed' | 'cancelled' | 'error' = 'initializing';
+    let currentUploadId: string | null = null;
+    let currentBaseUrl: string | null = null;
+
+    const uploadPromise = (async (): Promise<UploadResult> => {
       try {
-        if (onProgress) onProgress(evt);
-      } catch {
-        // Ignore UI callback failures
-      }
-    };
 
-    if (!this.cryptoObj?.subtle) {
-      throw new DropgateValidationError(
-        'Web Crypto API not available (crypto.subtle).'
-      );
-    }
+        const progress = (evt: UploadProgressEvent): void => {
+          try {
+            if (onProgress) onProgress(evt);
+          } catch {
+            // Ignore UI callback failures
+          }
+        };
 
-    const fileSizeBytes = file.size;
-
-    // 0) Get server info + compat
-    progress({ phase: 'server-info', text: 'Checking server...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
-
-    const compat = await this.checkCompatibility({
-      host,
-      port,
-      secure,
-      timeoutMs: timeouts.serverInfoMs ?? 5000,
-      signal,
-    });
-
-    const { baseUrl, serverInfo } = compat;
-    progress({ phase: 'server-compat', text: compat.message, percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
-    if (!compat.compatible) {
-      throw new DropgateValidationError(compat.message);
-    }
-
-    // 1) Validate inputs
-    const filename = filenameOverride ?? file.name ?? 'file';
-
-    if (!encrypt) {
-      validatePlainFilename(filename);
-    }
-
-    this.validateUploadInputs({ file, lifetimeMs, encrypt, serverInfo });
-
-    // 2) Encryption prep
-    let cryptoKey: CryptoKey | null = null;
-    let keyB64: string | null = null;
-    let transmittedFilename = filename;
-
-    if (encrypt) {
-      progress({ phase: 'crypto', text: 'Generating encryption key...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
-      try {
-        cryptoKey = await generateAesGcmKey(this.cryptoObj);
-        keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
-        transmittedFilename = await encryptFilenameToBase64(
-          this.cryptoObj,
-          filename,
-          cryptoKey
-        );
-      } catch (err) {
-        throw new DropgateError('Failed to prepare encryption.', {
-          code: 'CRYPTO_PREP_FAILED',
-          cause: err,
-        });
-      }
-    }
-
-    // 3) Compute reservation sizes
-    const totalChunks = Math.ceil(file.size / this.chunkSize);
-    const totalUploadSize = estimateTotalUploadSizeBytes(
-      file.size,
-      totalChunks,
-      encrypt
-    );
-
-    // 4) Init
-    progress({ phase: 'init', text: 'Reserving server storage...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
-
-    const initPayload = {
-      filename: transmittedFilename,
-      lifetime: lifetimeMs,
-      isEncrypted: Boolean(encrypt),
-      totalSize: totalUploadSize,
-      totalChunks,
-    };
-
-    const initRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/init`, {
-      method: 'POST',
-      timeoutMs: timeouts.initMs ?? 15000,
-      signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(initPayload),
-    });
-
-    if (!initRes.res.ok) {
-      const errorJson = initRes.json as { error?: string } | null;
-      const msg =
-        errorJson?.error ||
-        `Server initialisation failed: ${initRes.res.status}`;
-      throw new DropgateProtocolError(msg, {
-        details: initRes.json || initRes.text,
-      });
-    }
-
-    const initJson = initRes.json as { uploadId?: string } | null;
-    const uploadId = initJson?.uploadId;
-    if (!uploadId || typeof uploadId !== 'string') {
-      throw new DropgateProtocolError(
-        'Server did not return a valid uploadId.'
-      );
-    }
-
-    // 5) Chunks
-    const retries = Number.isFinite(retry.retries) ? retry.retries! : 5;
-    const baseBackoffMs = Number.isFinite(retry.backoffMs)
-      ? retry.backoffMs!
-      : 1000;
-    const maxBackoffMs = Number.isFinite(retry.maxBackoffMs)
-      ? retry.maxBackoffMs!
-      : 30000;
-
-    for (let i = 0; i < totalChunks; i++) {
-      if (signal?.aborted) {
-        throw signal.reason || new DropgateAbortError();
-      }
-
-      const start = i * this.chunkSize;
-      const end = Math.min(start + this.chunkSize, file.size);
-      let chunkBlob: Blob | FileSource = file.slice(start, end);
-
-      const percentComplete = (i / totalChunks) * 100;
-      const processedBytes = i * this.chunkSize;
-      progress({
-        phase: 'chunk',
-        text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
-        percent: percentComplete,
-        processedBytes,
-        totalBytes: fileSizeBytes,
-        chunkIndex: i,
-        totalChunks,
-      });
-
-      // Get ArrayBuffer from the slice
-      const chunkBuffer = await chunkBlob.arrayBuffer();
-
-      // Encrypt if needed
-      let uploadBlob: Blob;
-      if (encrypt && cryptoKey) {
-        uploadBlob = await encryptToBlob(this.cryptoObj, chunkBuffer, cryptoKey);
-      } else {
-        uploadBlob = new Blob([chunkBuffer]);
-      }
-
-      // Server validates: chunk <= 5MB + 1024
-      if (uploadBlob.size > DEFAULT_CHUNK_SIZE + 1024) {
-        throw new DropgateValidationError(
-          'Chunk too large (client-side). Check chunk size settings.'
-        );
-      }
-
-      // Hash encrypted/plain payload
-      const toHash = await uploadBlob.arrayBuffer();
-      const hashHex = await sha256Hex(this.cryptoObj, toHash);
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/octet-stream',
-        'X-Upload-ID': uploadId,
-        'X-Chunk-Index': String(i),
-        'X-Chunk-Hash': hashHex,
-      };
-
-      const chunkUrl = `${baseUrl}/upload/chunk`;
-      await this.attemptChunkUpload(
-        chunkUrl,
-        {
-          method: 'POST',
-          headers,
-          body: uploadBlob,
-        },
-        {
-          retries,
-          backoffMs: baseBackoffMs,
-          maxBackoffMs,
-          timeoutMs: timeouts.chunkMs ?? 60000,
-          signal,
-          progress,
-          chunkIndex: i,
-          totalChunks,
-          chunkSize: this.chunkSize,
-          fileSizeBytes,
+        if (!this.cryptoObj?.subtle) {
+          throw new DropgateValidationError(
+            'Web Crypto API not available (crypto.subtle).'
+          );
         }
-      );
-    }
 
-    // 6) Complete
-    progress({ phase: 'complete', text: 'Finalising upload...', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
+        const fileSizeBytes = file.size;
 
-    const completeRes = await fetchJson(
-      this.fetchFn,
-      `${baseUrl}/upload/complete`,
-      {
-        method: 'POST',
-        timeoutMs: timeouts.completeMs ?? 30000,
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ uploadId }),
+        // 0) Get server info + compat
+        progress({ phase: 'server-info', text: 'Checking server...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
+
+        const compat = await this.checkCompatibility({
+          host,
+          port,
+          secure,
+          timeoutMs: timeouts.serverInfoMs ?? 5000,
+          signal: effectiveSignal,
+        });
+
+        const { baseUrl, serverInfo } = compat;
+        progress({ phase: 'server-compat', text: compat.message, percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
+        if (!compat.compatible) {
+          throw new DropgateValidationError(compat.message);
+        }
+
+        // 1) Validate inputs
+        const filename = filenameOverride ?? file.name ?? 'file';
+
+        // Resolve encrypt option: default to true if server supports E2EE
+        const serverSupportsE2EE = Boolean(serverInfo?.capabilities?.upload?.e2ee);
+        const effectiveEncrypt = encrypt ?? serverSupportsE2EE;
+
+        if (!effectiveEncrypt) {
+          validatePlainFilename(filename);
+        }
+
+        this.validateUploadInputs({ file, lifetimeMs, encrypt: effectiveEncrypt, serverInfo });
+
+        // 2) Encryption prep
+        let cryptoKey: CryptoKey | null = null;
+        let keyB64: string | null = null;
+        let transmittedFilename = filename;
+
+        if (effectiveEncrypt) {
+          progress({ phase: 'crypto', text: 'Generating encryption key...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
+          try {
+            cryptoKey = await generateAesGcmKey(this.cryptoObj);
+            keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
+            transmittedFilename = await encryptFilenameToBase64(
+              this.cryptoObj,
+              filename,
+              cryptoKey
+            );
+          } catch (err) {
+            throw new DropgateError('Failed to prepare encryption.', {
+              code: 'CRYPTO_PREP_FAILED',
+              cause: err,
+            });
+          }
+        }
+
+        // 3) Compute reservation sizes
+        const totalChunks = Math.ceil(file.size / this.chunkSize);
+        const totalUploadSize = estimateTotalUploadSizeBytes(
+          file.size,
+          totalChunks,
+          effectiveEncrypt
+        );
+
+        // 4) Init
+        progress({ phase: 'init', text: 'Reserving server storage...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
+
+        const initPayload = {
+          filename: transmittedFilename,
+          lifetime: lifetimeMs,
+          isEncrypted: effectiveEncrypt,
+          totalSize: totalUploadSize,
+          totalChunks,
+          ...(maxDownloads !== undefined ? { maxDownloads } : {}),
+        };
+
+        const initRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/init`, {
+          method: 'POST',
+          timeoutMs: timeouts.initMs ?? 15000,
+          signal: effectiveSignal,
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(initPayload),
+        });
+
+        if (!initRes.res.ok) {
+          const errorJson = initRes.json as { error?: string } | null;
+          const msg =
+            errorJson?.error ||
+            `Server initialisation failed: ${initRes.res.status}`;
+          throw new DropgateProtocolError(msg, {
+            details: initRes.json || initRes.text,
+          });
+        }
+
+        const initJson = initRes.json as { uploadId?: string } | null;
+        const uploadId = initJson?.uploadId;
+        if (!uploadId || typeof uploadId !== 'string') {
+          throw new DropgateProtocolError(
+            'Server did not return a valid uploadId.'
+          );
+        }
+
+        // Store uploadId and baseUrl for cancellation
+        currentUploadId = uploadId;
+        currentBaseUrl = baseUrl;
+        uploadState = 'uploading';
+
+        // 5) Chunks
+        const retries = Number.isFinite(retry.retries) ? retry.retries! : 5;
+        const baseBackoffMs = Number.isFinite(retry.backoffMs)
+          ? retry.backoffMs!
+          : 1000;
+        const maxBackoffMs = Number.isFinite(retry.maxBackoffMs)
+          ? retry.maxBackoffMs!
+          : 30000;
+
+        for (let i = 0; i < totalChunks; i++) {
+          if (effectiveSignal?.aborted) {
+            throw effectiveSignal.reason || new DropgateAbortError();
+          }
+
+          const start = i * this.chunkSize;
+          const end = Math.min(start + this.chunkSize, file.size);
+          let chunkBlob: Blob | FileSource = file.slice(start, end);
+
+          const percentComplete = (i / totalChunks) * 100;
+          const processedBytes = i * this.chunkSize;
+          progress({
+            phase: 'chunk',
+            text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
+            percent: percentComplete,
+            processedBytes,
+            totalBytes: fileSizeBytes,
+            chunkIndex: i,
+            totalChunks,
+          });
+
+          // Get ArrayBuffer from the slice
+          const chunkBuffer = await chunkBlob.arrayBuffer();
+
+          // Encrypt if needed
+          let uploadBlob: Blob;
+          if (effectiveEncrypt && cryptoKey) {
+            uploadBlob = await encryptToBlob(this.cryptoObj, chunkBuffer, cryptoKey);
+          } else {
+            uploadBlob = new Blob([chunkBuffer]);
+          }
+
+          // Server validates: chunk <= 5MB + 1024
+          if (uploadBlob.size > DEFAULT_CHUNK_SIZE + 1024) {
+            throw new DropgateValidationError(
+              'Chunk too large (client-side). Check chunk size settings.'
+            );
+          }
+
+          // Hash encrypted/plain payload
+          const toHash = await uploadBlob.arrayBuffer();
+          const hashHex = await sha256Hex(this.cryptoObj, toHash);
+
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/octet-stream',
+            'X-Upload-ID': uploadId,
+            'X-Chunk-Index': String(i),
+            'X-Chunk-Hash': hashHex,
+          };
+
+          const chunkUrl = `${baseUrl}/upload/chunk`;
+          await this.attemptChunkUpload(
+            chunkUrl,
+            {
+              method: 'POST',
+              headers,
+              body: uploadBlob,
+            },
+            {
+              retries,
+              backoffMs: baseBackoffMs,
+              maxBackoffMs,
+              timeoutMs: timeouts.chunkMs ?? 60000,
+              signal: effectiveSignal,
+              progress,
+              chunkIndex: i,
+              totalChunks,
+              chunkSize: this.chunkSize,
+              fileSizeBytes,
+            }
+          );
+        }
+
+        // 6) Complete
+        progress({ phase: 'complete', text: 'Finalising upload...', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
+
+        uploadState = 'completing';
+        const completeRes = await fetchJson(
+          this.fetchFn,
+          `${baseUrl}/upload/complete`,
+          {
+            method: 'POST',
+            timeoutMs: timeouts.completeMs ?? 30000,
+            signal: effectiveSignal,
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({ uploadId }),
+          }
+        );
+
+        if (!completeRes.res.ok) {
+          const errorJson = completeRes.json as { error?: string } | null;
+          const msg = errorJson?.error || 'Finalisation failed.';
+          throw new DropgateProtocolError(msg, {
+            details: completeRes.json || completeRes.text,
+          });
+        }
+
+        const completeJson = completeRes.json as { id?: string } | null;
+        const fileId = completeJson?.id;
+        if (!fileId || typeof fileId !== 'string') {
+          throw new DropgateProtocolError(
+            'Server did not return a valid file id.'
+          );
+        }
+
+        let downloadUrl = `${baseUrl}/${fileId}`;
+        if (effectiveEncrypt && keyB64) {
+          downloadUrl += `#${keyB64}`;
+        }
+
+        progress({ phase: 'done', text: 'Upload successful!', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
+
+        uploadState = 'completed';
+        return {
+          downloadUrl,
+          fileId,
+          uploadId,
+          baseUrl,
+          ...(effectiveEncrypt && keyB64 ? { keyB64 } : {}),
+        };
+      } catch (err) {
+        // Handle abort/cancellation
+        if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('abort'))) {
+          uploadState = 'cancelled';
+          onCancel?.();
+        } else {
+          uploadState = 'error';
+        }
+        throw err;
       }
-    );
+    })();
 
-    if (!completeRes.res.ok) {
-      const errorJson = completeRes.json as { error?: string } | null;
-      const msg = errorJson?.error || 'Finalisation failed.';
-      throw new DropgateProtocolError(msg, {
-        details: completeRes.json || completeRes.text,
-      });
-    }
+    // Create cancel endpoint caller
+    const callCancelEndpoint = async (uploadId: string, baseUrl: string): Promise<void> => {
+      try {
+        await fetchJson(this.fetchFn, `${baseUrl}/upload/cancel`, {
+          method: 'POST',
+          timeoutMs: 5000,
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ uploadId }),
+        });
+      } catch {
+        // Best effort - ignore cancellation endpoint errors
+      }
+    };
 
-    const completeJson = completeRes.json as { id?: string } | null;
-    const fileId = completeJson?.id;
-    if (!fileId || typeof fileId !== 'string') {
-      throw new DropgateProtocolError(
-        'Server did not return a valid file id.'
-      );
-    }
-
-    let downloadUrl = `${baseUrl}/${fileId}`;
-    if (encrypt && keyB64) {
-      downloadUrl += `#${keyB64}`;
-    }
-
-    progress({ phase: 'done', text: 'Upload successful!', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
-
+    // Return session object
     return {
-      downloadUrl,
-      fileId,
-      uploadId,
-      baseUrl,
-      ...(encrypt && keyB64 ? { keyB64 } : {}),
+      result: uploadPromise,
+      cancel: (reason?: string) => {
+        if (uploadState === 'completed' || uploadState === 'cancelled') return;
+        uploadState = 'cancelled';
+
+        // Call server cancel endpoint if uploadId exists
+        if (currentUploadId && currentBaseUrl) {
+          callCancelEndpoint(currentUploadId, currentBaseUrl).catch(() => { });
+        }
+
+        // Abort the controller with a proper error object so AbortError checks work
+        internalController?.abort(new DropgateAbortError(reason || 'Upload cancelled by user.'));
+      },
+      getStatus: () => uploadState,
     };
   }
 

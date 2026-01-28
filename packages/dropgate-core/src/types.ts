@@ -8,6 +8,8 @@ export interface UploadCapabilities {
   maxSizeMB?: number;
   /** Maximum file lifetime in hours (0 = unlimited). */
   maxLifetimeHours?: number;
+  /** Maximum downloads before file is deleted (0 = unlimited). */
+  maxFileDownloads?: number;
   /** Whether end-to-end encryption is supported. */
   e2ee?: boolean;
 }
@@ -97,6 +99,19 @@ export interface UploadResult {
   baseUrl: string;
   /** Base64-encoded encryption key (only present if encrypted). */
   keyB64?: string;
+}
+
+/**
+ * Upload session with cancellation support.
+ * Returned by uploadFile() to allow cancelling uploads in progress.
+ */
+export interface UploadSession {
+  /** Promise that resolves with upload result when complete. */
+  result: Promise<UploadResult>;
+  /** Cancel the upload. */
+  cancel: (reason?: string) => void;
+  /** Get current upload status. */
+  getStatus: () => 'initializing' | 'uploading' | 'completing' | 'completed' | 'cancelled' | 'error';
 }
 
 /**
@@ -227,12 +242,16 @@ export interface UploadOptions extends ServerTarget {
   file: FileSource;
   /** File lifetime in milliseconds (0 = server default). */
   lifetimeMs: number;
-  /** Whether to encrypt the file with E2EE. */
-  encrypt: boolean;
+  /** Whether to encrypt the file with E2EE. Defaults to true if server supports E2EE. */
+  encrypt?: boolean;
   /** Override the filename sent to the server. */
   filenameOverride?: string;
   /** Callback for progress updates. */
   onProgress?: (evt: UploadProgressEvent) => void;
+  /** Callback when upload is cancelled by user. */
+  onCancel?: () => void;
+  /** Max downloads before file is deleted (0 = unlimited). */
+  maxDownloads?: number;
   /** AbortSignal to cancel the upload. */
   signal?: AbortSignal;
   /** Timeout settings for various upload phases. */
@@ -277,8 +296,8 @@ export interface ValidateUploadOptions {
   file: FileSource;
   /** Requested file lifetime in milliseconds. */
   lifetimeMs: number;
-  /** Whether encryption will be used. */
-  encrypt: boolean;
+  /** Whether encryption will be used. Defaults to true if server supports E2EE. */
+  encrypt?: boolean;
   /** Server info containing capabilities to validate against. */
   serverInfo: ServerInfo;
 }

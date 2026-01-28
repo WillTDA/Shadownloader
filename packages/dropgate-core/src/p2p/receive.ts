@@ -54,6 +54,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     onComplete,
     onError,
     onDisconnect,
+    onCancel,
   } = opts;
 
   // Validate required options
@@ -130,9 +131,9 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     }
   };
 
-  // Safe error handler - prevents calling onError after completion
+  // Safe error handler - prevents calling onError after completion or cancellation
   const safeError = (err: Error): void => {
-    if (state === 'closed' || state === 'completed') return;
+    if (state === 'closed' || state === 'completed' || state === 'cancelled') return;
     state = 'closed';
     onError?.(err);
     cleanup();
@@ -178,8 +179,25 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   }
 
   const stop = (): void => {
-    if (state === 'closed') return;
-    state = 'closed';
+    if (state === 'closed' || state === 'cancelled') return;
+
+    const wasActive = state === 'transferring';
+    state = 'cancelled';
+
+    // Notify peer before cleanup
+    try {
+      // @ts-expect-error - open property may exist on PeerJS connections
+      if (activeConn && activeConn.open) {
+        activeConn.send({ t: 'cancelled', message: 'Receiver cancelled the transfer.' });
+      }
+    } catch {
+      // Best effort
+    }
+
+    if (wasActive && onCancel) {
+      onCancel({ cancelledBy: 'receiver' });
+    }
+
     cleanup();
   };
 
@@ -303,6 +321,14 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             throw new DropgateNetworkError(msg.message || 'Sender reported an error.');
           }
 
+          if (msg.t === 'cancelled') {
+            if (state === 'cancelled' || state === 'closed' || state === 'completed') return;
+            state = 'cancelled';
+            onCancel?.({ cancelledBy: 'sender', message: msg.message });
+            cleanup();
+            return;
+          }
+
           return;
         }
 
@@ -361,16 +387,20 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     });
 
     conn.on('close', () => {
-      if (state === 'closed' || state === 'completed') {
-        // Clean shutdown, ensure full cleanup
+      if (state === 'closed' || state === 'completed' || state === 'cancelled') {
+        // Clean shutdown or already cancelled, ensure full cleanup
         cleanup();
         return;
       }
 
-      // Sender disconnected before transfer completed
+      // Sender disconnected or cancelled before transfer completed
       if (state === 'transferring') {
-        // We were mid-transfer
-        safeError(new DropgateNetworkError('Sender disconnected during transfer.'));
+        // Connection closed during active transfer — the sender either cancelled
+        // or disconnected. Treat as a sender-initiated cancellation so the UI
+        // can show a clean message instead of a raw error.
+        state = 'cancelled';
+        onCancel?.({ cancelledBy: 'sender' });
+        cleanup();
       } else if (state === 'negotiating') {
         // We had metadata but transfer hadn't started
         state = 'closed';

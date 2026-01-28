@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.1.0-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-2.2.0-brightgreen?style=flat-square)
 ![docker](https://img.shields.io/badge/docker-supported-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -113,6 +113,7 @@ If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a 
 | `UPLOAD_MAX_FILE_SIZE_MB` | `100` | Max file size in MB (`0` = unlimited). |
 | `UPLOAD_MAX_STORAGE_GB` | `10` | Max total storage in GB (`0` = unlimited). |
 | `UPLOAD_MAX_FILE_LIFETIME_HOURS` | `24` | Max file lifetime in hours (`0` = unlimited). |
+| `UPLOAD_MAX_FILE_DOWNLOADS` | `1` | Max downloads before file is deleted (`0` = unlimited). |
 | `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Cleanup interval for incomplete uploads (`0` = disabled). |
 
 ### Direct Transfer (P2P)
@@ -135,13 +136,14 @@ Example response:
 ```json
 {
   "name": "Dropgate Server",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "logLevel": "INFO",
   "capabilities": {
     "upload": {
       "enabled": true,
       "maxSizeMB": 100,
       "maxLifetimeHours": 24,
+      "maxFileDownloads": 1,
       "e2ee": true
     },
     "p2p": {

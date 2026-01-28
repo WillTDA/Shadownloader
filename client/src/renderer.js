@@ -17,8 +17,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         const connectionStatus = document.getElementById('connection-status');
         const fileLifetimeValueInput = document.getElementById('file-lifetime-value');
         const fileLifetimeUnitSelect = document.getElementById('file-lifetime-unit');
-        const encryptCheckbox = document.getElementById('encrypt-checkbox');
+        const fileLifetimeHelp = document.getElementById('file-lifetime-help');
+        const maxDownloadsSection = document.getElementById('max-downloads-section');
+        const maxDownloadsValue = document.getElementById('max-downloads-value');
+        const maxDownloadsHelp = document.getElementById('max-downloads-help');
+
+        // Custom E2EE UI
+        const securityStatus = document.getElementById('security-status');
+        const securityIcon = document.getElementById('security-icon');
+        const securityText = document.getElementById('security-text');
+        const insecureUploadModal = document.getElementById('insecure-upload-modal');
+        const confirmInsecureBtn = document.getElementById('confirm-insecure-upload');
         const uploadBtn = document.getElementById('upload-btn');
+        const cancelUploadBtn = document.getElementById('cancel-upload-btn');
         const uploadStatus = document.getElementById('upload-status');
         const progressBar = document.getElementById('progress-bar');
         const linkSection = document.getElementById('link-section');
@@ -29,6 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         let selectedFile = null;
         /** @type {{compatible:boolean, message?:string}} */
         let lastServerCheck = { compatible: false, message: '' };
+        let activeUploadSession = null;
 
         // --- Core client (shared logic for Electron + Web UI) ---
         const clientVersion = await window.electronAPI.getClientVersion();
@@ -75,26 +87,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             fileLifetimeValueInput.value = 0;
         }
 
+        // Load max downloads preference
+        if (settings.maxDownloads) {
+            maxDownloadsValue.value = settings.maxDownloads;
+        }
+
         await checkServerCompatibility();
 
         // --- Event Listeners ---
-        fileLifetimeValueInput.addEventListener('blur', () => {
-            if (fileLifetimeUnitSelect.value !== 'unlimited') {
-                const value = parseFloat(fileLifetimeValueInput.value);
-                if (isNaN(value) || value <= 0) {
-                    fileLifetimeValueInput.value = 0.5;
-                }
-            }
-            validateLifetimeInput();
-            saveSettings();
-        });
+        const updateLifetimeSettings = () => {
+            const isUnlimited = fileLifetimeUnitSelect.value === 'unlimited';
+            fileLifetimeValueInput.disabled = isUnlimited;
 
-        fileLifetimeUnitSelect.addEventListener('change', () => {
-            if (fileLifetimeUnitSelect.value === 'unlimited') {
-                fileLifetimeValueInput.disabled = true;
+            if (isUnlimited) {
                 fileLifetimeValueInput.value = 0;
             } else {
-                fileLifetimeValueInput.disabled = false;
                 const value = parseFloat(fileLifetimeValueInput.value);
                 if (isNaN(value) || value <= 0) {
                     fileLifetimeValueInput.value = 0.5;
@@ -102,7 +109,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             validateLifetimeInput();
             saveSettings();
-        });
+        };
+
+        const updateMaxDownloadsSettings = () => {
+            if (maxDownloadsValue.value === '') {
+                maxDownloadsValue.value = 1;
+            }
+            validateMaxDownloadsInput();
+            saveSettings();
+        };
+
+        fileLifetimeValueInput.addEventListener('blur', () => updateLifetimeSettings());
+        fileLifetimeValueInput.addEventListener('input', () => updateLifetimeSettings());
+        fileLifetimeUnitSelect.addEventListener('change', () => updateLifetimeSettings());
+        maxDownloadsValue.addEventListener('input', () => updateMaxDownloadsSettings());
+        maxDownloadsValue.addEventListener('blur', () => updateMaxDownloadsSettings());
 
         selectFileBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
@@ -170,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await checkServerCompatibility();
             } catch (error) {
                 connectionStatus.textContent = 'Connection failed. Check URL or if server is running.';
+                updateUploadabilityState(false);
                 connectionStatus.className = 'form-text mt-1 text-danger';
             } finally {
                 testConnectionBtn.disabled = false;
@@ -241,7 +263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.log('File size:', details.data.byteLength, 'bytes');
                 const file = new File([details.data], details.name);
                 selectedFile = file;
-                encryptCheckbox.checked = details.useE2EE || false;
+                // Encryption is auto-determined by server capabilities later
 
                 const settings = await window.electronAPI.getSettings();
                 console.log('Settings loaded:', settings);
@@ -328,39 +350,81 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            const useEncryption = encryptCheckbox.checked;
+            const serverUrl = serverUrlInput.value.trim();
+            const isTargetSecure = serverUrl.startsWith('https://');
+            const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
 
-            // UI-side checks (core also validates, but these give instant feedback)
-            if (serverCapabilities?.upload) {
-                if (useEncryption && !serverCapabilities.upload.e2ee) {
+            // Check if E2EE is available - show warning if not
+            if (!hasE2EE) {
+                const confirmed = await showInsecureUploadModal();
+                if (!confirmed) {
                     window.electronAPI.uploadFinished({
                         status: 'error',
-                        error: 'Server does not support end-to-end encryption.'
+                        error: 'Upload cancelled by user (insecure connection).'
                     });
                     return;
                 }
             }
+
+            const encrypt = hasE2EE; // Auto-set encryption based on capability
 
             const lifetimeMs = getLifetimeInMs();
             saveSettings();
 
             try {
                 const serverTarget = parseServerUrl(serverUrlInput.value.trim());
-                const result = await coreClient.uploadFile({
+                const session = await coreClient.uploadFile({
                     ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
-                    encrypt: useEncryption,
+                    maxDownloads: parseInt(maxDownloadsValue.value, 10) || 1,
+                    encrypt: encrypt,
                     onProgress: (evt) => {
                         const payload = {};
                         if (evt?.text) payload.text = evt.text;
                         if (evt?.percent !== undefined) payload.percent = evt.percent;
                         if (Object.keys(payload).length) window.electronAPI.uploadProgress(payload);
+                    },
+                    onCancel: () => {
+                        uploadStatus.textContent = 'Upload cancelled.';
+                        uploadStatus.className = 'form-text mt-1 text-warning';
+                        // Swap buttons back
+                        uploadBtn.style.display = 'block';
+                        cancelUploadBtn.style.display = 'none';
+                        activeUploadSession = null;
+                        resetUI(false);
                     }
                 });
 
+                // Store session and swap buttons
+                activeUploadSession = session;
+                uploadBtn.style.display = 'none';
+                cancelUploadBtn.style.display = 'block';
+
+                // Wire up cancel button
+                cancelUploadBtn.onclick = () => {
+                    if (activeUploadSession) {
+                        activeUploadSession.cancel('User cancelled upload.');
+                        activeUploadSession = null;
+                        cancelUploadBtn.style.display = 'none';
+                        uploadBtn.style.display = 'block';
+                    }
+                };
+
+                const result = await session.result;
+
+                // Swap buttons back on success
+                uploadBtn.style.display = 'block';
+                cancelUploadBtn.style.display = 'none';
+                activeUploadSession = null;
+
                 window.electronAPI.uploadFinished({ status: 'success', link: result.downloadUrl });
             } catch (error) {
+                // Swap buttons back on error
+                uploadBtn.style.display = 'block';
+                cancelUploadBtn.style.display = 'none';
+                activeUploadSession = null;
+
                 window.electronAPI.uploadFinished({
                     status: 'error',
                     error: error?.message || String(error)
@@ -370,11 +434,85 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // --- Utility Functions ---
 
+        /**
+         * Update the security status card based on E2EE and HTTPS availability.
+         */
+        function updateSecurityStatus() {
+            if (!securityStatus || !securityIcon || !securityText) return;
+            // Electron context note: window.isSecureContext can be true for localhost http,
+            // but for real security we care about HTTPS or just trusting the capability check context if local.
+            // For simplicity, we trust the server capability flag + check protocol if remote.
+
+            // In Electron renderer, location.protocol serves file:// usually or http/https if loaded remotely.
+            // But here we are making requests to 'serverUrlInput.value'.
+            // So we need to check the active server URL protocol.
+            const serverUrl = serverUrlInput.value.trim();
+            const isTargetSecure = serverUrl.startsWith('https://');
+            const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
+
+            if (hasE2EE) {
+                // Green: Full E2EE
+                securityIcon.textContent = 'verified';
+                securityIcon.className = 'material-icons-round text-success';
+                securityText.textContent = 'Your upload will be end-to-end encrypted.';
+                securityStatus.className = 'security-status-card security-green mb-3';
+            } else if (isTargetSecure) {
+                // Yellow: HTTPS but no E2EE
+                securityIcon.textContent = 'warning';
+                securityIcon.className = 'material-icons-round text-warning';
+                securityText.textContent = "This server doesn't support encryption. Your upload is protected in transit via HTTPS.";
+                securityStatus.className = 'security-status-card security-yellow mb-3';
+            } else {
+                // Red: HTTP, no encryption at all
+                securityIcon.textContent = 'gpp_bad';
+                securityIcon.className = 'material-icons-round text-danger';
+                securityText.textContent = 'This connection is not secure. Your upload will not be encrypted.';
+                securityStatus.className = 'security-status-card security-red mb-3';
+            }
+        }
+
+        /**
+         * Show the insecure upload warning modal and return a promise.
+         * @returns {Promise<boolean>} True if user confirms, false if cancelled.
+         */
+        function showInsecureUploadModal() {
+            return new Promise((resolve) => {
+                if (!insecureUploadModal) {
+                    resolve(true);
+                    return;
+                }
+
+                const modal = new bootstrap.Modal(insecureUploadModal);
+
+                const cleanup = () => {
+                    confirmInsecureBtn?.removeEventListener('click', onConfirm);
+                    insecureUploadModal.removeEventListener('hidden.bs.modal', onHide);
+                };
+
+                const onConfirm = () => {
+                    cleanup();
+                    modal.hide();
+                    resolve(true);
+                };
+
+                const onHide = () => {
+                    cleanup();
+                    resolve(false);
+                };
+
+                confirmInsecureBtn?.addEventListener('click', onConfirm, { once: true });
+                insecureUploadModal.addEventListener('hidden.bs.modal', onHide, { once: true });
+
+                modal.show();
+            });
+        }
+
         function saveSettings() {
             window.electronAPI.setSettings({
                 serverURL: serverUrlInput.value,
                 lifetimeValue: fileLifetimeValueInput.value,
-                lifetimeUnit: fileLifetimeUnitSelect.value
+                lifetimeUnit: fileLifetimeUnitSelect.value,
+                maxDownloads: maxDownloadsValue.value
             });
         }
 
@@ -398,8 +536,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             try {
-                const serverTarget = parseServerUrl(inputUrl);
-                const compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+                // Auto-detect protocol if missing
+                let targetUrl = inputUrl;
+                let autoAddedProtocol = false;
+
+                if (!inputUrl.match(/^https?:\/\//i)) {
+                    targetUrl = 'https://' + inputUrl;
+                    autoAddedProtocol = true;
+                }
+
+                let serverTarget = parseServerUrl(targetUrl);
+                let compat;
+
+                try {
+                    compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+
+                    // If we auto-added https and it worked, update the input
+                    if (autoAddedProtocol) {
+                        serverUrlInput.value = targetUrl;
+                        // serverTarget is already correct
+                    }
+                } catch (err) {
+                    // If we guessed HTTPS and it failed, try HTTP
+                    if (autoAddedProtocol) {
+                        console.log('HTTPS auto-detect failed, falling back to HTTP...');
+                        targetUrl = 'http://' + inputUrl;
+                        serverTarget = parseServerUrl(targetUrl);
+                        compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
+
+                        // If this worked, update the input
+                        serverUrlInput.value = targetUrl;
+                    } else {
+                        // User specified protocol or we failed both
+                        throw err;
+                    }
+                }
 
                 const { serverInfo } = compat;
 
@@ -413,6 +584,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 serverCapabilities = serverInfo.capabilities;
+
+                // Check if uploads are explicitly disabled by the server
+                if (serverCapabilities.upload && serverCapabilities.upload.enabled === false) {
+                    const message = 'File uploads are disabled on this server.';
+                    updateUploadabilityState(false, message);
+                    lastServerCheck = { compatible: false, message };
+                    return lastServerCheck;
+                } else {
+                    updateUploadabilityState(true);
+                }
+
                 applyServerLimits();
 
                 if (!compat.compatible) {
@@ -448,20 +630,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                 uploadBtn.disabled = true;
                 console.error('Compatibility check failed:', error);
                 lastServerCheck = { compatible: false, message };
+                updateUploadabilityState(false, message);
                 return lastServerCheck;
             }
         }
 
         function validateLifetimeInput() {
-            if (!serverCapabilities || !serverCapabilities.upload) return true; // If we can't validate, don't block UI.
+            if (!serverCapabilities || !serverCapabilities.upload) return true;
 
             const limitHours = serverCapabilities.upload.maxLifetimeHours;
+            const unit = fileLifetimeUnitSelect.value;
 
             // If server allows unlimited, and user selected unlimited, we are good.
-            if (limitHours === 0 && fileLifetimeUnitSelect.value === 'unlimited') return true;
+            if (limitHours === 0 && unit === 'unlimited') {
+                fileLifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
+                fileLifetimeHelp.className = 'form-text mt-1 text-muted';
+                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
+                return true;
+            }
 
-            // If user selected unlimited but server forbids it (should be caught by UI, but double check)
-            if (limitHours > 0 && fileLifetimeUnitSelect.value === 'unlimited') {
+            // If user selected unlimited but server forbids it
+            if (limitHours > 0 && unit === 'unlimited') {
                 fileLifetimeUnitSelect.value = 'hours';
                 fileLifetimeValueInput.disabled = false;
             }
@@ -470,28 +659,110 @@ document.addEventListener('DOMContentLoaded', async () => {
             const limitMs = limitHours * 60 * 60 * 1000;
 
             if (limitHours > 0 && currentMs > limitMs) {
-                function hoursToReadable(hours) {
-                    if (hours < 1) {
-                        const minutes = Math.round(hours * 60);
-                        return `${minutes} minute(s)`;
-                    } else if (hours < 24) {
-                        return `${hours} hour(s)`;
-                    } else {
-                        const days = (hours / 24).toFixed(2) % 1 === 0 ? (hours / 24).toFixed(0) : (hours / 24).toFixed(2);
-                        return `${days} day(s)`;
-                    }
-                }
-                uploadStatus.textContent = `File lifetime too long. Server limit: ${hoursToReadable(limitHours)}.`;
-                uploadStatus.className = 'form-text mt-1 text-danger';
+                fileLifetimeHelp.textContent = `File lifetime too long. Server limit: ${limitHours} hours.`;
+                fileLifetimeHelp.className = 'form-text mt-1 text-danger';
                 uploadBtn.disabled = true;
                 return false;
             } else {
-                // Only clear status if it was a time limit error
-                if (uploadStatus.textContent.includes('File lifetime too long')) {
-                    uploadStatus.textContent = '';
+                // Valid
+                if (limitHours === 0) {
+                    fileLifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
+                } else {
+                    fileLifetimeHelp.textContent = `Max lifetime: ${limitHours} hours.`;
                 }
+                fileLifetimeHelp.className = 'form-text mt-1 text-muted';
+
                 if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
                 return true;
+            }
+        }
+
+        function validateMaxDownloadsInput() {
+            if (!serverCapabilities || !serverCapabilities.upload) return true;
+
+            const maxFileDownloads = serverCapabilities.upload.maxFileDownloads ?? 1;
+            const value = parseInt(maxDownloadsValue.value, 10);
+
+            // Handle invalid input
+            if (isNaN(value) || value < 0) {
+                maxDownloadsHelp.textContent = 'Max downloads must be a non-negative number.';
+                maxDownloadsHelp.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            }
+
+            // Server allows unlimited (0) - any value is valid
+            if (maxFileDownloads === 0) {
+                maxDownloadsHelp.textContent = '0 = unlimited downloads';
+                maxDownloadsHelp.className = 'form-text mt-1 text-muted'; // or text-body-secondary
+                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
+                return true;
+            }
+
+            // Server has limit of 1 - input should be disabled anyway (handled by applyServerLimits)
+            if (maxFileDownloads === 1) {
+                maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+                maxDownloadsHelp.className = 'form-text mt-1 text-muted';
+                return true;
+            }
+
+            // Server has limit > 1
+            if (value === 0) {
+                maxDownloadsHelp.textContent = `0 (unlimited) not allowed. Server limit: ${maxFileDownloads} downloads.`;
+                maxDownloadsHelp.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            }
+
+            if (value > maxFileDownloads) {
+                maxDownloadsHelp.textContent = `Exceeds server limit of ${maxFileDownloads} downloads.`;
+                maxDownloadsHelp.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            }
+
+            // Valid
+            maxDownloadsHelp.textContent = `Max: ${maxFileDownloads} downloads`;
+            maxDownloadsHelp.className = 'form-text mt-1 text-muted';
+
+            if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
+            return true;
+        }
+
+        // Update UI based on whether uploads are enabled
+        function updateUploadabilityState(enabled, message = '') {
+            if (!enabled) {
+                if (message) {
+                    uploadStatus.textContent = message;
+                    uploadStatus.className = 'form-text mt-1 text-danger';
+                }
+
+                // Clear loading text and hide security badge
+                fileLifetimeHelp.textContent = '';
+                maxDownloadsHelp.textContent = '';
+                securityStatus.style.display = 'none';
+
+                // Disable UI interactions
+                uploadBtn.disabled = true;
+                selectFileBtn.disabled = true;
+                dropZone.style.opacity = '0.5';
+                dropZone.style.pointerEvents = 'none';
+
+                // Disable inputs
+                fileLifetimeValueInput.disabled = true;
+                fileLifetimeUnitSelect.disabled = true;
+                maxDownloadsValue.disabled = true;
+            } else {
+                // Re-enable UI
+                selectFileBtn.disabled = false;
+                dropZone.style.opacity = '1';
+                dropZone.style.pointerEvents = 'auto';
+                securityStatus.style.display = 'flex'; // Restore if enabled
+
+                // Inputs will be further refined by applyServerLimits, but enable them generally here
+                fileLifetimeValueInput.disabled = false;
+                fileLifetimeUnitSelect.disabled = false;
+                maxDownloadsValue.disabled = false;
             }
         }
 
@@ -523,12 +794,37 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // E2EE toggle
-            if (!serverCapabilities.upload.e2ee) {
-                encryptCheckbox.checked = false;
-                encryptCheckbox.disabled = true;
+            // Update Security Status UI (Auto-managed E2EE)
+            updateSecurityStatus();
+
+            // Max Downloads UI
+            const maxFileDownloads = serverCapabilities.upload.maxFileDownloads ?? 1;
+
+            // Get current value (loaded from settings or user input)
+            let currentValue = parseInt(maxDownloadsValue.value, 10);
+            if (isNaN(currentValue)) currentValue = 1;
+
+            if (maxFileDownloads === 1) {
+                // Server forces single-download: disable input
+                maxDownloadsValue.value = '1';
+                maxDownloadsValue.min = '1';
+                maxDownloadsValue.disabled = true;
+                maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+            } else if (maxFileDownloads === 0) {
+                // Server allows unlimited
+                maxDownloadsValue.disabled = false;
+                maxDownloadsValue.min = '0';
+                maxDownloadsHelp.textContent = '0 = unlimited downloads';
             } else {
-                encryptCheckbox.disabled = false;
+                // Server has a limit > 1 (0 is not allowed)
+                maxDownloadsValue.disabled = false;
+                maxDownloadsValue.min = '1';
+                maxDownloadsHelp.textContent = `Max: ${maxFileDownloads} downloads`;
+
+                // Auto-clamp if needed (if current is 0/unlimited or exceeds limit)
+                if (currentValue === 0 || currentValue > maxFileDownloads) {
+                    maxDownloadsValue.value = String(maxFileDownloads);
+                }
             }
 
             // Re-validate current inputs

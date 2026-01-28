@@ -29,9 +29,16 @@ const els = {
   lifetimeUnit: $('lifetimeUnit'),
   lifetimeHelp: $('lifetimeHelp'),
 
-  optEncrypt: $('optEncrypt'),
-  encYes: $('encYes'),
-  encNo: $('encNo'),
+  optMaxDownloads: $('optMaxDownloads'),
+  maxDownloadsValue: $('maxDownloadsValue'),
+  maxDownloadsHelp: $('maxDownloadsHelp'),
+
+  securityStatus: $('securityStatus'),
+  securityIcon: $('securityIcon'),
+  securityText: $('securityText'),
+  insecureUploadModal: $('insecureUploadModal'),
+  insecureModalBody: $('insecureModalBody'),
+  confirmInsecureUpload: $('confirmInsecureUpload'),
 
   p2pInfo: $('p2pInfo'),
   startBtn: $('startBtn'),
@@ -44,6 +51,8 @@ const els = {
   progressSub: $('progressSub'),
   progressFill: $('progressFill'),
   progressBytes: $('progressBytes'),
+  cancelStandardUpload: $('cancelStandardUpload'),
+  cancelP2PSend: $('cancelP2PSend'),
 
   p2pWaitCard: $('p2pWaitCard'),
   p2pCode: $('p2pCode'),
@@ -82,14 +91,16 @@ const state = {
   p2pEnabled: false,
   maxSizeMB: null,
   maxLifetimeHours: null,
+  maxFileDownloads: 1,
   e2ee: false,
   peerjsPath: '/peerjs',
   iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
   p2pSession: null,
   p2pSecureOk: true,
+  uploadSession: null,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '2.1.0' });
+const coreClient = new DropgateClient({ clientVersion: '2.2.0' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -193,7 +204,8 @@ function updateStartEnabled() {
   const hasFile = Boolean(state.file);
   if (state.mode === 'standard') {
     const lifetimeOk = validateLifetimeInput();
-    const canUpload = state.uploadEnabled && !state.fileTooLargeForStandard && lifetimeOk;
+    const maxDownloadsOk = validateMaxDownloadsInput();
+    const canUpload = state.uploadEnabled && !state.fileTooLargeForStandard && lifetimeOk && maxDownloadsOk;
     setDisabled(els.startBtn, !(hasFile && canUpload));
   } else {
     const canP2P = state.p2pEnabled && state.p2pSecureOk;
@@ -225,9 +237,10 @@ function setMode(mode) {
 
   setSelected(els.modeStandard, els.modeP2P, isStandard);
 
-  // Options shown in Standard mode
+  // Options shown in Standard mode only
   setHidden(els.optLifetime, !isStandard);
-  setHidden(els.optEncrypt, !isStandard);
+  setHidden(els.optMaxDownloads, !isStandard || !state.uploadEnabled);
+  updateSecurityStatus();
   setHidden(els.p2pInfo, isStandard);
 
   if (isStandard) {
@@ -248,6 +261,84 @@ function setMode(mode) {
   }
 
   updateStartEnabled();
+}
+
+/**
+ * Update the security status card based on E2EE and HTTPS availability.
+ */
+function updateSecurityStatus() {
+  const icon = els.securityIcon;
+  const text = els.securityText;
+  const card = els.securityStatus;
+
+  if (!icon || !text || !card) return;
+
+  // Hide if uploads are disabled or in P2P mode
+  if (!state.uploadEnabled || state.mode === 'p2p') {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'flex'; // Ensure it's visible otherwise
+
+  const isHttps = location.protocol === 'https:';
+  const hasE2EE = state.uploadEnabled && state.e2ee && window.isSecureContext;
+
+  if (hasE2EE) {
+    // Green: Full E2EE
+    icon.textContent = 'verified';
+    icon.className = 'material-icons-round text-success';
+    text.textContent = 'Your upload will be end-to-end encrypted.';
+    card.className = 'security-status-card security-green mb-3';
+  } else if (isHttps) {
+    // Yellow: HTTPS but no E2EE
+    icon.textContent = 'warning';
+    icon.className = 'material-icons-round text-warning';
+    text.textContent = "This server doesn't support encryption. Your upload is protected in transit via HTTPS.";
+    card.className = 'security-status-card security-yellow mb-3';
+  } else {
+    // Red: HTTP, no encryption at all
+    icon.textContent = 'gpp_bad';
+    icon.className = 'material-icons-round text-danger';
+    text.textContent = 'This connection is not secure. Your upload will not be encrypted.';
+    card.className = 'security-status-card security-red mb-3';
+  }
+}
+
+/**
+ * Show the insecure upload warning modal and return a promise.
+ * @returns {Promise<boolean>} True if user confirms, false if cancelled.
+ */
+function showInsecureUploadModal() {
+  return new Promise((resolve) => {
+    const modalEl = els.insecureUploadModal;
+    if (!modalEl) {
+      resolve(true); // If modal doesn't exist, proceed anyway
+      return;
+    }
+
+    const modal = new window.bootstrap.Modal(modalEl);
+
+    const cleanup = () => {
+      els.confirmInsecureUpload?.removeEventListener('click', onConfirm);
+      modalEl.removeEventListener('hidden.bs.modal', onHide);
+    };
+
+    const onConfirm = () => {
+      cleanup();
+      modal.hide();
+      resolve(true);
+    };
+
+    const onHide = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    els.confirmInsecureUpload?.addEventListener('click', onConfirm, { once: true });
+    modalEl.addEventListener('hidden.bs.modal', onHide, { once: true });
+
+    modal.show();
+  });
 }
 
 function updateCapabilitiesUI() {
@@ -284,31 +375,10 @@ function updateCapabilitiesUI() {
     }
   }
 
-  // Encryption
+  // Security status (auto-enable encryption based on server capabilities)
   const canEncrypt = state.uploadEnabled && state.e2ee && window.isSecureContext;
-  const encMessage = $('encryptionMessage');
-  if (encMessage) {
-    if (state.uploadEnabled && state.e2ee && !window.isSecureContext) {
-      encMessage.textContent = 'Encryption requires HTTPS.';
-      encMessage.className = 'encryption-message text-warning';
-    } else if (state.uploadEnabled && !state.e2ee) {
-      encMessage.textContent = 'End-to-End Encryption is not supported on this server.';
-      encMessage.className = 'encryption-message text-body-secondary';
-    } else if (canEncrypt) {
-      encMessage.textContent = 'End-to-End Encryption is available.';
-      encMessage.className = 'encryption-message text-success';
-    } else if (!state.uploadEnabled) {
-      encMessage.textContent = '';
-      encMessage.className = 'encryption-message';
-    }
-  }
-  if (!canEncrypt) {
-    state.encrypt = false;
-    setSelected(els.encYes, els.encNo, false);
-    setDisabled(els.encYes, true);
-  } else {
-    setDisabled(els.encYes, false);
-  }
+  state.encrypt = canEncrypt; // Auto-set encryption based on capability
+  updateSecurityStatus();
 
   // Mode toggle availability
   const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
@@ -323,6 +393,32 @@ function updateCapabilitiesUI() {
 
   setDisabled(els.lifetimeValue, !state.uploadEnabled || els.lifetimeUnit.value === 'unlimited');
   setDisabled(els.lifetimeUnit, !state.uploadEnabled);
+
+  // Max Downloads UI (only for standard uploads, not P2P)
+  if (state.uploadEnabled && state.mode === 'standard') {
+    if (state.maxFileDownloads === 1) {
+      // Server forces single-download: disable input, show message
+      setDisabled(els.maxDownloadsValue, true);
+      els.maxDownloadsValue.value = '1';
+      els.maxDownloadsValue.min = '1';
+      els.maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+      setHidden(els.optMaxDownloads, false);
+    } else if (state.maxFileDownloads === 0) {
+      // Server allows unlimited
+      setDisabled(els.maxDownloadsValue, false);
+      els.maxDownloadsValue.min = '0';
+      els.maxDownloadsHelp.textContent = '0 = unlimited downloads';
+      setHidden(els.optMaxDownloads, false);
+    } else {
+      // Server has a limit > 1 (0 is not allowed)
+      setDisabled(els.maxDownloadsValue, false);
+      els.maxDownloadsValue.min = '1';
+      els.maxDownloadsHelp.textContent = `Max: ${state.maxFileDownloads} downloads`;
+      setHidden(els.optMaxDownloads, false);
+    }
+  } else {
+    setHidden(els.optMaxDownloads, true);
+  }
 
   validateLifetimeInput();
 }
@@ -352,6 +448,7 @@ async function loadServerInfo() {
   state.uploadEnabled = Boolean(upload?.enabled);
   state.maxSizeMB = state.uploadEnabled ? (upload?.maxSizeMB ?? null) : null;
   state.maxLifetimeHours = state.uploadEnabled ? (upload?.maxLifetimeHours ?? null) : null;
+  state.maxFileDownloads = state.uploadEnabled ? (upload?.maxFileDownloads ?? 1) : 1;
   state.e2ee = state.uploadEnabled ? Boolean(upload?.e2ee) : false;
 
   const p2p = info?.capabilities?.p2p;
@@ -377,7 +474,7 @@ function validateLifetimeInput() {
   const unit = els.lifetimeUnit.value;
 
   if (maxH === 0 && unit === 'unlimited') {
-    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
+    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
     els.lifetimeHelp.className = 'form-text text-body-secondary';
     return true;
   }
@@ -398,7 +495,7 @@ function validateLifetimeInput() {
   }
 
   if (maxH === 0) {
-    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
+    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
   } else if (maxH > 0) {
     els.lifetimeHelp.textContent = `Max lifetime: ${maxH} hours.`;
   }
@@ -406,6 +503,50 @@ function validateLifetimeInput() {
   return true;
 }
 
+function validateMaxDownloadsInput() {
+  if (!state.uploadEnabled || state.mode !== 'standard') return true;
+
+  const max = state.maxFileDownloads;
+  const value = parseInt(els.maxDownloadsValue.value, 10);
+
+  // Handle invalid input
+  if (isNaN(value) || value < 0) {
+    els.maxDownloadsHelp.textContent = 'Must be a non-negative number.';
+    els.maxDownloadsHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  // Server allows unlimited (0) - any value is valid
+  if (max === 0) {
+    els.maxDownloadsHelp.textContent = '0 = unlimited downloads';
+    els.maxDownloadsHelp.className = 'form-text text-body-secondary';
+    return true;
+  }
+
+  // Server has limit of 1 - input should be disabled anyway
+  if (max === 1) {
+    els.maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+    els.maxDownloadsHelp.className = 'form-text text-body-secondary';
+    return true;
+  }
+
+  // Server has limit > 1
+  if (value === 0) {
+    els.maxDownloadsHelp.textContent = `0 (unlimited) not allowed. Server limit: ${max} downloads.`;
+    els.maxDownloadsHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  if (value > max) {
+    els.maxDownloadsHelp.textContent = `Exceeds server limit of ${max} downloads.`;
+    els.maxDownloadsHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  els.maxDownloadsHelp.textContent = `Max: ${max} downloads`;
+  els.maxDownloadsHelp.className = 'form-text text-body-secondary';
+  return true;
+}
 function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconColor }) {
   showPanels('progress');
   if (icon != null) {
@@ -517,7 +658,15 @@ async function startStandardUpload() {
   }
 
   els.tagline.textContent = 'Standard Upload';
-  const encrypt = Boolean(state.encrypt);
+
+  // Check if E2EE is available - show warning if not
+  const hasE2EE = state.uploadEnabled && state.e2ee && window.isSecureContext;
+  if (!hasE2EE) {
+    const confirmed = await showInsecureUploadModal();
+    if (!confirmed) return;
+  }
+
+  const encrypt = hasE2EE; // Auto-set encryption based on capability
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
     ? state.maxSizeMB * 1000 * 1000
     : null;
@@ -545,13 +694,14 @@ async function startStandardUpload() {
   showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
-    const result = await coreClient.uploadFile({
+    const session = await coreClient.uploadFile({
       host: location.hostname,
       port: location.port ? Number(location.port) : undefined,
       secure: location.protocol === 'https:',
       file,
       encrypt,
       lifetimeMs,
+      maxDownloads: parseInt(els.maxDownloadsValue.value, 10) || 1,
       onProgress: ({ phase, text, percent }) => {
         const p = (typeof percent === 'number') ? percent : 0;
         showProgress({
@@ -564,11 +714,42 @@ async function startStandardUpload() {
           iconColor: 'text-primary',
         });
       },
+      onCancel: () => {
+        showToast('Upload cancelled.', 'warning');
+        resetToMain();
+      },
     });
+
+    // Store session and show cancel button
+    state.uploadSession = session;
+    els.cancelStandardUpload.style.display = 'inline-block';
+
+    // Wire up cancel button
+    els.cancelStandardUpload.onclick = () => {
+      session.cancel('User cancelled upload.');
+      state.uploadSession = null;
+      els.cancelStandardUpload.style.display = 'none';
+    };
+
+    const result = await session.result;
+
+    // Hide cancel button on success
+    els.cancelStandardUpload.style.display = 'none';
+    state.uploadSession = null;
 
     showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
     showShare({ link: result.downloadUrl });
   } catch (err) {
+    // Hide cancel button on error
+    els.cancelStandardUpload.style.display = 'none';
+    state.uploadSession = null;
+
+    // Check if it was a cancellation (handle both native AbortError and DropgateAbortError)
+    if (err?.name === 'AbortError' || err?.code === 'ABORT_ERROR') {
+      // Already handled by onCancel
+      return;
+    }
+
     console.error(err);
     showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
     showToast(err?.message || 'Upload failed.');
@@ -659,6 +840,9 @@ async function startP2PSendFlow() {
       } else if (phase === 'transferring') {
         // Switch to progress card when transfer actually starts
         showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+        // Show P2P cancel button
+        els.cancelP2PSend.style.display = 'inline-block';
+        els.cancelStandardUpload.style.display = 'none';
       } else {
         // Default behavior for other statuses
         showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
@@ -668,6 +852,7 @@ async function startP2PSendFlow() {
       showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: processedBytes, totalBytes, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
+      els.cancelP2PSend.style.display = 'none';
       stopP2P();
       showShare({
         title: 'Transfer Complete',
@@ -677,12 +862,23 @@ async function startP2PSendFlow() {
     },
     onError: (err) => {
       console.error(err);
+      els.cancelP2PSend.style.display = 'none';
       showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
       stopP2P();
     },
     onDisconnect: () => {
+      els.cancelP2PSend.style.display = 'none';
       showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'link_off', iconColor: 'text-warning' });
       stopP2P();
+    },
+    onCancel: (evt) => {
+      els.cancelP2PSend.style.display = 'none';
+      stopP2P();
+      const msg = evt?.cancelledBy === 'receiver'
+        ? 'The receiver cancelled the transfer.'
+        : 'Transfer cancelled.';
+      showToast(msg, 'warning');
+      resetToMain();
     },
   });
 
@@ -690,7 +886,13 @@ async function startP2PSendFlow() {
   els.qrP2PLink.onclick = () => showQRModal(els.p2pLink.value);
   els.cancelP2P.onclick = () => {
     stopP2P();
+    showToast('Transfer cancelled.', 'warning');
     resetToMain();
+  };
+  els.cancelP2PSend.onclick = () => {
+    if (state.p2pSession) {
+      state.p2pSession.stop();
+    }
   };
 }
 
@@ -740,22 +942,6 @@ function wireUI() {
     setMode('p2p');
   });
 
-  // Encryption
-  els.encYes?.addEventListener('click', () => {
-    if (!(state.uploadEnabled && state.e2ee && window.isSecureContext)) {
-      showToast('Encryption requires HTTPS and server support.');
-      return;
-    }
-    state.encrypt = true;
-    setSelected(els.encYes, els.encNo, true);
-    if (state.file) handleFileSelection(state.file);
-  });
-  els.encNo?.addEventListener('click', () => {
-    state.encrypt = false;
-    setSelected(els.encYes, els.encNo, false);
-    if (state.file) handleFileSelection(state.file);
-  });
-
   // Lifetime input - mirror Electron behavior
   const normaliseLifetimeValue = () => {
     if (els.lifetimeUnit.value === 'unlimited') {
@@ -771,7 +957,7 @@ function wireUI() {
     }
   };
 
-  els.lifetimeValue?.addEventListener('blur', () => {
+  els.lifetimeValue?.addEventListener('input', () => {
     if (!state.uploadEnabled) return;
     normaliseLifetimeValue();
     validateLifetimeInput();
@@ -782,6 +968,15 @@ function wireUI() {
     if (!state.uploadEnabled) return;
     normaliseLifetimeValue();
     validateLifetimeInput();
+    updateStartEnabled();
+  });
+
+  els.maxDownloadsValue?.addEventListener('input', () => {
+    if (!state.uploadEnabled) return;
+    if (els.maxDownloadsValue.value === '') {
+      els.maxDownloadsValue.value = '1';
+    }
+    validateMaxDownloadsInput();
     updateStartEnabled();
   });
 

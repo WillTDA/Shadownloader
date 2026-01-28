@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uploadProgress: (progressData) => ipcRenderer.send('upload-progress', progressData),
     onUpdateUI: (callback) => ipcRenderer.on('update-ui', (_event, data) => callback(data)),
     uploadFinished: (result) => ipcRenderer.send('upload-finished', result),
+    cancelUpload: () => ipcRenderer.send('cancel-upload'),
+    onCancelUpload: (callback) => ipcRenderer.on('cancel-upload-trigger', (_event) => callback()),
     rendererReady: () => ipcRenderer.send('renderer-ready'),
     openExternal: (url) => ipcRenderer.send('open-external', url)
 });
