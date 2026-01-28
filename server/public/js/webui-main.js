@@ -29,6 +29,10 @@ const els = {
   lifetimeUnit: $('lifetimeUnit'),
   lifetimeHelp: $('lifetimeHelp'),
 
+  optMaxDownloads: $('optMaxDownloads'),
+  maxDownloadsValue: $('maxDownloadsValue'),
+  maxDownloadsHelp: $('maxDownloadsHelp'),
+
   securityStatus: $('securityStatus'),
   securityIcon: $('securityIcon'),
   securityText: $('securityText'),
@@ -87,6 +91,7 @@ const state = {
   p2pEnabled: false,
   maxSizeMB: null,
   maxLifetimeHours: null,
+  maxFileDownloads: 1,
   e2ee: false,
   peerjsPath: '/peerjs',
   iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
@@ -199,7 +204,8 @@ function updateStartEnabled() {
   const hasFile = Boolean(state.file);
   if (state.mode === 'standard') {
     const lifetimeOk = validateLifetimeInput();
-    const canUpload = state.uploadEnabled && !state.fileTooLargeForStandard && lifetimeOk;
+    const maxDownloadsOk = validateMaxDownloadsInput();
+    const canUpload = state.uploadEnabled && !state.fileTooLargeForStandard && lifetimeOk && maxDownloadsOk;
     setDisabled(els.startBtn, !(hasFile && canUpload));
   } else {
     const canP2P = state.p2pEnabled && state.p2pSecureOk;
@@ -231,8 +237,9 @@ function setMode(mode) {
 
   setSelected(els.modeStandard, els.modeP2P, isStandard);
 
-  // Options shown in Standard mode
+  // Options shown in Standard mode only
   setHidden(els.optLifetime, !isStandard);
+  setHidden(els.optMaxDownloads, !isStandard || !state.uploadEnabled);
   updateSecurityStatus();
   setHidden(els.p2pInfo, isStandard);
 
@@ -387,6 +394,32 @@ function updateCapabilitiesUI() {
   setDisabled(els.lifetimeValue, !state.uploadEnabled || els.lifetimeUnit.value === 'unlimited');
   setDisabled(els.lifetimeUnit, !state.uploadEnabled);
 
+  // Max Downloads UI (only for standard uploads, not P2P)
+  if (state.uploadEnabled && state.mode === 'standard') {
+    if (state.maxFileDownloads === 1) {
+      // Server forces single-download: disable input, show message
+      setDisabled(els.maxDownloadsValue, true);
+      els.maxDownloadsValue.value = '1';
+      els.maxDownloadsValue.min = '1';
+      els.maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+      setHidden(els.optMaxDownloads, false);
+    } else if (state.maxFileDownloads === 0) {
+      // Server allows unlimited
+      setDisabled(els.maxDownloadsValue, false);
+      els.maxDownloadsValue.min = '0';
+      els.maxDownloadsHelp.textContent = '0 = unlimited downloads';
+      setHidden(els.optMaxDownloads, false);
+    } else {
+      // Server has a limit > 1 (0 is not allowed)
+      setDisabled(els.maxDownloadsValue, false);
+      els.maxDownloadsValue.min = '1';
+      els.maxDownloadsHelp.textContent = `Max: ${state.maxFileDownloads} downloads`;
+      setHidden(els.optMaxDownloads, false);
+    }
+  } else {
+    setHidden(els.optMaxDownloads, true);
+  }
+
   validateLifetimeInput();
 }
 
@@ -415,6 +448,7 @@ async function loadServerInfo() {
   state.uploadEnabled = Boolean(upload?.enabled);
   state.maxSizeMB = state.uploadEnabled ? (upload?.maxSizeMB ?? null) : null;
   state.maxLifetimeHours = state.uploadEnabled ? (upload?.maxLifetimeHours ?? null) : null;
+  state.maxFileDownloads = state.uploadEnabled ? (upload?.maxFileDownloads ?? 1) : 1;
   state.e2ee = state.uploadEnabled ? Boolean(upload?.e2ee) : false;
 
   const p2p = info?.capabilities?.p2p;
@@ -440,7 +474,7 @@ function validateLifetimeInput() {
   const unit = els.lifetimeUnit.value;
 
   if (maxH === 0 && unit === 'unlimited') {
-    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
+    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
     els.lifetimeHelp.className = 'form-text text-body-secondary';
     return true;
   }
@@ -461,7 +495,7 @@ function validateLifetimeInput() {
   }
 
   if (maxH === 0) {
-    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server (0 = unlimited).';
+    els.lifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
   } else if (maxH > 0) {
     els.lifetimeHelp.textContent = `Max lifetime: ${maxH} hours.`;
   }
@@ -469,6 +503,50 @@ function validateLifetimeInput() {
   return true;
 }
 
+function validateMaxDownloadsInput() {
+  if (!state.uploadEnabled || state.mode !== 'standard') return true;
+
+  const max = state.maxFileDownloads;
+  const value = parseInt(els.maxDownloadsValue.value, 10);
+
+  // Handle invalid input
+  if (isNaN(value) || value < 0) {
+    els.maxDownloadsHelp.textContent = 'Must be a non-negative number.';
+    els.maxDownloadsHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  // Server allows unlimited (0) - any value is valid
+  if (max === 0) {
+    els.maxDownloadsHelp.textContent = '0 = unlimited downloads';
+    els.maxDownloadsHelp.className = 'form-text text-body-secondary';
+    return true;
+  }
+
+  // Server has limit of 1 - input should be disabled anyway
+  if (max === 1) {
+    els.maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+    els.maxDownloadsHelp.className = 'form-text text-body-secondary';
+    return true;
+  }
+
+  // Server has limit > 1
+  if (value === 0) {
+    els.maxDownloadsHelp.textContent = `0 (unlimited) not allowed. Server limit: ${max} downloads.`;
+    els.maxDownloadsHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  if (value > max) {
+    els.maxDownloadsHelp.textContent = `Exceeds server limit of ${max} downloads.`;
+    els.maxDownloadsHelp.className = 'form-text text-danger';
+    return false;
+  }
+
+  els.maxDownloadsHelp.textContent = `Max: ${max} downloads`;
+  els.maxDownloadsHelp.className = 'form-text text-body-secondary';
+  return true;
+}
 function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconColor }) {
   showPanels('progress');
   if (icon != null) {
@@ -623,6 +701,7 @@ async function startStandardUpload() {
       file,
       encrypt,
       lifetimeMs,
+      maxDownloads: parseInt(els.maxDownloadsValue.value, 10) || 1,
       onProgress: ({ phase, text, percent }) => {
         const p = (typeof percent === 'number') ? percent : 0;
         showProgress({
@@ -878,7 +957,7 @@ function wireUI() {
     }
   };
 
-  els.lifetimeValue?.addEventListener('blur', () => {
+  els.lifetimeValue?.addEventListener('input', () => {
     if (!state.uploadEnabled) return;
     normaliseLifetimeValue();
     validateLifetimeInput();
@@ -889,6 +968,15 @@ function wireUI() {
     if (!state.uploadEnabled) return;
     normaliseLifetimeValue();
     validateLifetimeInput();
+    updateStartEnabled();
+  });
+
+  els.maxDownloadsValue?.addEventListener('input', () => {
+    if (!state.uploadEnabled) return;
+    if (els.maxDownloadsValue.value === '') {
+      els.maxDownloadsValue.value = '1';
+    }
+    validateMaxDownloadsInput();
     updateStartEnabled();
   });
 

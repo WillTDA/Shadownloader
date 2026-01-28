@@ -46,7 +46,7 @@
         <div class="mb-3">
             <label for="file-lifetime-value" class="form-label">File Lifetime</label>
             <div class="input-group">
-                <input type="number" class="form-control" id="file-lifetime-value" value="24" min="0" step="0.5">
+                <input type="number" class="form-control" id="file-lifetime-value" value="24" min="0.5" step="0.5">
                 <select class="form-select" id="file-lifetime-unit">
                     <option value="minutes">Minutes</option>
                     <option value="hours" selected>Hours</option>
@@ -54,6 +54,16 @@
                     <option value="unlimited">Unlimited</option>
                 </select>
             </div>
+            <div id="file-lifetime-help" class="form-text">Loading...</div>
+        </div>
+
+        <div class="mb-3" id="max-downloads-section">
+            <label for="max-downloads-value" class="form-label">Max Downloads</label>
+            <div class="input-group">
+                <input type="number" class="form-control" id="max-downloads-value" value="1" min="0" step="1">
+                <span class="input-group-text">downloads</span>
+            </div>
+            <div id="max-downloads-help" class="form-text">Loading...</div>
         </div>
 
         <!-- Security Status Card -->

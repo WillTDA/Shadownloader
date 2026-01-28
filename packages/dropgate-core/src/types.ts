@@ -8,6 +8,8 @@ export interface UploadCapabilities {
   maxSizeMB?: number;
   /** Maximum file lifetime in hours (0 = unlimited). */
   maxLifetimeHours?: number;
+  /** Maximum downloads before file is deleted (0 = unlimited). */
+  maxFileDownloads?: number;
   /** Whether end-to-end encryption is supported. */
   e2ee?: boolean;
 }
@@ -248,6 +250,8 @@ export interface UploadOptions extends ServerTarget {
   onProgress?: (evt: UploadProgressEvent) => void;
   /** Callback when upload is cancelled by user. */
   onCancel?: () => void;
+  /** Max downloads before file is deleted (0 = unlimited). */
+  maxDownloads?: number;
   /** AbortSignal to cancel the upload. */
   signal?: AbortSignal;
   /** Timeout settings for various upload phases. */

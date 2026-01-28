@@ -113,6 +113,7 @@ If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a 
 | `UPLOAD_MAX_FILE_SIZE_MB` | `100` | Max file size in MB (`0` = unlimited). |
 | `UPLOAD_MAX_STORAGE_GB` | `10` | Max total storage in GB (`0` = unlimited). |
 | `UPLOAD_MAX_FILE_LIFETIME_HOURS` | `24` | Max file lifetime in hours (`0` = unlimited). |
+| `UPLOAD_MAX_FILE_DOWNLOADS` | `1` | Max downloads before file is deleted (`0` = unlimited). |
 | `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Cleanup interval for incomplete uploads (`0` = disabled). |
 
 ### Direct Transfer (P2P)
@@ -142,6 +143,7 @@ Example response:
       "enabled": true,
       "maxSizeMB": 100,
       "maxLifetimeHours": 24,
+      "maxFileDownloads": 1,
       "e2ee": true
     },
     "p2p": {

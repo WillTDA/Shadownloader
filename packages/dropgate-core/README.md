@@ -60,6 +60,7 @@ const result = await client.uploadFile({
   secure: true,
   file: myFile, // File or Blob
   lifetimeMs: 3600000, // 1 hour
+  maxDownloads: 5, // Limit number of downloads
   encrypt: true,
   onProgress: ({ phase, text, percent }) => {
     console.log(`${phase}: ${text} (${percent ? percent : 0}%)`);

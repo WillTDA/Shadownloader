@@ -17,6 +17,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const connectionStatus = document.getElementById('connection-status');
         const fileLifetimeValueInput = document.getElementById('file-lifetime-value');
         const fileLifetimeUnitSelect = document.getElementById('file-lifetime-unit');
+        const fileLifetimeHelp = document.getElementById('file-lifetime-help');
+        const maxDownloadsSection = document.getElementById('max-downloads-section');
+        const maxDownloadsValue = document.getElementById('max-downloads-value');
+        const maxDownloadsHelp = document.getElementById('max-downloads-help');
 
         // Custom E2EE UI
         const securityStatus = document.getElementById('security-status');
@@ -83,26 +87,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             fileLifetimeValueInput.value = 0;
         }
 
+        // Load max downloads preference
+        if (settings.maxDownloads) {
+            maxDownloadsValue.value = settings.maxDownloads;
+        }
+
         await checkServerCompatibility();
 
         // --- Event Listeners ---
-        fileLifetimeValueInput.addEventListener('blur', () => {
-            if (fileLifetimeUnitSelect.value !== 'unlimited') {
-                const value = parseFloat(fileLifetimeValueInput.value);
-                if (isNaN(value) || value <= 0) {
-                    fileLifetimeValueInput.value = 0.5;
-                }
-            }
-            validateLifetimeInput();
-            saveSettings();
-        });
+        const updateLifetimeSettings = () => {
+            const isUnlimited = fileLifetimeUnitSelect.value === 'unlimited';
+            fileLifetimeValueInput.disabled = isUnlimited;
 
-        fileLifetimeUnitSelect.addEventListener('change', () => {
-            if (fileLifetimeUnitSelect.value === 'unlimited') {
-                fileLifetimeValueInput.disabled = true;
+            if (isUnlimited) {
                 fileLifetimeValueInput.value = 0;
             } else {
-                fileLifetimeValueInput.disabled = false;
                 const value = parseFloat(fileLifetimeValueInput.value);
                 if (isNaN(value) || value <= 0) {
                     fileLifetimeValueInput.value = 0.5;
@@ -110,7 +109,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             validateLifetimeInput();
             saveSettings();
-        });
+        };
+
+        const updateMaxDownloadsSettings = () => {
+            if (maxDownloadsValue.value === '') {
+                maxDownloadsValue.value = 1;
+            }
+            validateMaxDownloadsInput();
+            saveSettings();
+        };
+
+        fileLifetimeValueInput.addEventListener('blur', () => updateLifetimeSettings());
+        fileLifetimeValueInput.addEventListener('input', () => updateLifetimeSettings());
+        fileLifetimeUnitSelect.addEventListener('change', () => updateLifetimeSettings());
+        maxDownloadsValue.addEventListener('input', () => updateMaxDownloadsSettings());
+        maxDownloadsValue.addEventListener('blur', () => updateMaxDownloadsSettings());
 
         selectFileBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
@@ -363,6 +376,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
+                    maxDownloads: parseInt(maxDownloadsValue.value, 10) || 1,
                     encrypt: encrypt,
                     onProgress: (evt) => {
                         const payload = {};
@@ -496,7 +510,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.electronAPI.setSettings({
                 serverURL: serverUrlInput.value,
                 lifetimeValue: fileLifetimeValueInput.value,
-                lifetimeUnit: fileLifetimeUnitSelect.value
+                lifetimeUnit: fileLifetimeUnitSelect.value,
+                maxDownloads: maxDownloadsValue.value
             });
         }
 
@@ -608,15 +623,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         function validateLifetimeInput() {
-            if (!serverCapabilities || !serverCapabilities.upload) return true; // If we can't validate, don't block UI.
+            if (!serverCapabilities || !serverCapabilities.upload) return true;
 
             const limitHours = serverCapabilities.upload.maxLifetimeHours;
+            const unit = fileLifetimeUnitSelect.value;
 
             // If server allows unlimited, and user selected unlimited, we are good.
-            if (limitHours === 0 && fileLifetimeUnitSelect.value === 'unlimited') return true;
+            if (limitHours === 0 && unit === 'unlimited') {
+                fileLifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
+                fileLifetimeHelp.className = 'form-text mt-1 text-muted';
+                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
+                return true;
+            }
 
-            // If user selected unlimited but server forbids it (should be caught by UI, but double check)
-            if (limitHours > 0 && fileLifetimeUnitSelect.value === 'unlimited') {
+            // If user selected unlimited but server forbids it
+            if (limitHours > 0 && unit === 'unlimited') {
                 fileLifetimeUnitSelect.value = 'hours';
                 fileLifetimeValueInput.disabled = false;
             }
@@ -625,29 +646,74 @@ document.addEventListener('DOMContentLoaded', async () => {
             const limitMs = limitHours * 60 * 60 * 1000;
 
             if (limitHours > 0 && currentMs > limitMs) {
-                function hoursToReadable(hours) {
-                    if (hours < 1) {
-                        const minutes = Math.round(hours * 60);
-                        return `${minutes} minute(s)`;
-                    } else if (hours < 24) {
-                        return `${hours} hour(s)`;
-                    } else {
-                        const days = (hours / 24).toFixed(2) % 1 === 0 ? (hours / 24).toFixed(0) : (hours / 24).toFixed(2);
-                        return `${days} day(s)`;
-                    }
-                }
-                uploadStatus.textContent = `File lifetime too long. Server limit: ${hoursToReadable(limitHours)}.`;
-                uploadStatus.className = 'form-text mt-1 text-danger';
+                fileLifetimeHelp.textContent = `File lifetime too long. Server limit: ${limitHours} hours.`;
+                fileLifetimeHelp.className = 'form-text mt-1 text-danger';
                 uploadBtn.disabled = true;
                 return false;
             } else {
-                // Only clear status if it was a time limit error
-                if (uploadStatus.textContent.includes('File lifetime too long')) {
-                    uploadStatus.textContent = '';
+                // Valid
+                if (limitHours === 0) {
+                    fileLifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
+                } else {
+                    fileLifetimeHelp.textContent = `Max lifetime: ${limitHours} hours.`;
                 }
+                fileLifetimeHelp.className = 'form-text mt-1 text-muted';
+
                 if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
                 return true;
             }
+        }
+
+        function validateMaxDownloadsInput() {
+            if (!serverCapabilities || !serverCapabilities.upload) return true;
+
+            const maxFileDownloads = serverCapabilities.upload.maxFileDownloads ?? 1;
+            const value = parseInt(maxDownloadsValue.value, 10);
+
+            // Handle invalid input
+            if (isNaN(value) || value < 0) {
+                maxDownloadsHelp.textContent = 'Max downloads must be a non-negative number.';
+                maxDownloadsHelp.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            }
+
+            // Server allows unlimited (0) - any value is valid
+            if (maxFileDownloads === 0) {
+                maxDownloadsHelp.textContent = '0 = unlimited downloads';
+                maxDownloadsHelp.className = 'form-text mt-1 text-muted'; // or text-body-secondary
+                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
+                return true;
+            }
+
+            // Server has limit of 1 - input should be disabled anyway (handled by applyServerLimits)
+            if (maxFileDownloads === 1) {
+                maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+                maxDownloadsHelp.className = 'form-text mt-1 text-muted';
+                return true;
+            }
+
+            // Server has limit > 1
+            if (value === 0) {
+                maxDownloadsHelp.textContent = `0 (unlimited) not allowed. Server limit: ${maxFileDownloads} downloads.`;
+                maxDownloadsHelp.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            }
+
+            if (value > maxFileDownloads) {
+                maxDownloadsHelp.textContent = `Exceeds server limit of ${maxFileDownloads} downloads.`;
+                maxDownloadsHelp.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            }
+
+            // Valid
+            maxDownloadsHelp.textContent = `Max: ${maxFileDownloads} downloads`;
+            maxDownloadsHelp.className = 'form-text mt-1 text-muted';
+
+            if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
+            return true;
         }
 
         // Apply server-enforced limits to the UI
@@ -680,6 +746,36 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Update Security Status UI (Auto-managed E2EE)
             updateSecurityStatus();
+
+            // Max Downloads UI
+            const maxFileDownloads = serverCapabilities.upload.maxFileDownloads ?? 1;
+
+            // Get current value (loaded from settings or user input)
+            let currentValue = parseInt(maxDownloadsValue.value, 10);
+            if (isNaN(currentValue)) currentValue = 1;
+
+            if (maxFileDownloads === 1) {
+                // Server forces single-download: disable input
+                maxDownloadsValue.value = '1';
+                maxDownloadsValue.min = '1';
+                maxDownloadsValue.disabled = true;
+                maxDownloadsHelp.textContent = 'Server enforces single-use download links.';
+            } else if (maxFileDownloads === 0) {
+                // Server allows unlimited
+                maxDownloadsValue.disabled = false;
+                maxDownloadsValue.min = '0';
+                maxDownloadsHelp.textContent = '0 = unlimited downloads';
+            } else {
+                // Server has a limit > 1 (0 is not allowed)
+                maxDownloadsValue.disabled = false;
+                maxDownloadsValue.min = '1';
+                maxDownloadsHelp.textContent = `Max: ${maxFileDownloads} downloads`;
+
+                // Auto-clamp if needed (if current is 0/unlimited or exceeds limit)
+                if (currentValue === 0 || currentValue > maxFileDownloads) {
+                    maxDownloadsValue.value = String(maxFileDownloads);
+                }
+            }
 
             // Re-validate current inputs
             validateLifetimeInput();

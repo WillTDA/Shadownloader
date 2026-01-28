@@ -342,6 +342,7 @@ export class DropgateClient {
       file,
       lifetimeMs,
       encrypt,
+      maxDownloads,
       filenameOverride,
       onProgress,
       onCancel,
@@ -447,6 +448,7 @@ export class DropgateClient {
           isEncrypted: effectiveEncrypt,
           totalSize: totalUploadSize,
           totalChunks,
+          ...(maxDownloads !== undefined ? { maxDownloads } : {}),
         };
 
         const initRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/init`, {

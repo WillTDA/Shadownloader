@@ -71,6 +71,40 @@ const parseList = (raw) => {
         .filter(Boolean);
 };
 
+/**
+ * Parse an environment variable as a non-negative integer.
+ * @param {string} envName - Name of the env var for error messages
+ * @param {string|undefined} raw - Raw env var value
+ * @param {number} defaultValue - Default if not set
+ * @returns {number} Parsed integer value
+ */
+const parseEnvInt = (envName, raw, defaultValue) => {
+    const value = raw !== undefined ? raw : defaultValue;
+    const num = Number(value);
+    if (isNaN(num) || num < 0 || !Number.isInteger(num)) {
+        log('error', `Invalid ${envName} environment variable. It must be a non-negative integer.`);
+        process.exit(1);
+    }
+    return num;
+};
+
+/**
+ * Parse an environment variable as a non-negative number (allows decimals).
+ * @param {string} envName - Name of the env var for error messages
+ * @param {string|undefined} raw - Raw env var value
+ * @param {number} defaultValue - Default if not set
+ * @returns {number} Parsed numeric value
+ */
+const parseEnvNumber = (envName, raw, defaultValue) => {
+    const value = raw !== undefined ? raw : defaultValue;
+    const num = Number(value);
+    if (isNaN(num) || num < 0) {
+        log('error', `Invalid ${envName} environment variable. It must be a non-negative number.`);
+        process.exit(1);
+    }
+    return num;
+};
+
 // Default: public STUN (Cloudflare) so P2P works out of the box.
 const p2pStunUrls = process.env.P2P_STUN_SERVERS
     ? parseList(process.env.P2P_STUN_SERVERS)
@@ -139,6 +173,7 @@ let maxFileLifetimeHours = 0;
 let MAX_FILE_SIZE_BYTES = Infinity;
 let MAX_STORAGE_BYTES = Infinity;
 let MAX_FILE_LIFETIME_MS = Infinity;
+let maxFileDownloads = 1;
 let currentDiskUsage = 0;
 let fileDatabase = null;
 let ongoingUploads = null;
@@ -147,29 +182,17 @@ if (enableUpload) {
     preserveUploads = process.env.UPLOAD_PRESERVE_UPLOADS === 'true';
     log('info', `UPLOAD_PRESERVE_UPLOADS: ${preserveUploads}`);
 
-    maxFileSizeMB = process.env.UPLOAD_MAX_FILE_SIZE_MB ? process.env.UPLOAD_MAX_FILE_SIZE_MB : 100;
-    if (isNaN(maxFileSizeMB) || maxFileSizeMB < 0 || !Number.isInteger(Number(maxFileSizeMB))) {
-        log('error', 'Invalid UPLOAD_MAX_FILE_SIZE_MB environment variable. It must be a non-negative integer.');
-        process.exit(1);
-    }
-
-    maxFileSizeMB = Number(maxFileSizeMB);
+    maxFileSizeMB = parseEnvInt('UPLOAD_MAX_FILE_SIZE_MB', process.env.UPLOAD_MAX_FILE_SIZE_MB, 100);
     MAX_FILE_SIZE_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1000 * 1000;
     log('info', `UPLOAD_MAX_FILE_SIZE_MB: ${maxFileSizeMB} MB`);
-    if (Number(maxFileSizeMB) === 0) {
+    if (maxFileSizeMB === 0) {
         log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
     }
 
-    maxStorageGB = process.env.UPLOAD_MAX_STORAGE_GB ? process.env.UPLOAD_MAX_STORAGE_GB : 10;
-    if (isNaN(maxStorageGB) || maxStorageGB < 0) {
-        log('error', 'Invalid UPLOAD_MAX_STORAGE_GB environment variable. It must be a non-negative number.');
-        process.exit(1);
-    }
-
-    maxStorageGB = Number(maxStorageGB);
+    maxStorageGB = parseEnvNumber('UPLOAD_MAX_STORAGE_GB', process.env.UPLOAD_MAX_STORAGE_GB, 10);
     MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1000 * 1000 * 1000;
     log('info', `UPLOAD_MAX_STORAGE_GB: ${maxStorageGB} GB`);
-    if (Number(maxStorageGB) === 0) {
+    if (maxStorageGB === 0) {
         log('warn', 'UPLOAD_MAX_STORAGE_GB is set to 0! Consider setting a limit on total storage used by uploaded files to prevent disk exhaustion.');
     }
 
@@ -177,17 +200,17 @@ if (enableUpload) {
         log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is larger than UPLOAD_MAX_STORAGE_GB! Any uploads larger than the allocated storage quota will be rejected.');
     }
 
-    maxFileLifetimeHours = process.env.UPLOAD_MAX_FILE_LIFETIME_HOURS ? process.env.UPLOAD_MAX_FILE_LIFETIME_HOURS : 24;
-    if (isNaN(maxFileLifetimeHours) || maxFileLifetimeHours < 0) {
-        log('error', 'Invalid UPLOAD_MAX_FILE_LIFETIME_HOURS environment variable. It must be a non-negative number.');
-        process.exit(1);
-    }
-
-    maxFileLifetimeHours = Number(maxFileLifetimeHours);
+    maxFileLifetimeHours = parseEnvNumber('UPLOAD_MAX_FILE_LIFETIME_HOURS', process.env.UPLOAD_MAX_FILE_LIFETIME_HOURS, 24);
     MAX_FILE_LIFETIME_MS = maxFileLifetimeHours === 0 ? Infinity : maxFileLifetimeHours * 60 * 60 * 1000;
     log('info', `UPLOAD_MAX_FILE_LIFETIME_HOURS: ${maxFileLifetimeHours} hours`);
-    if (Number(maxFileLifetimeHours) === 0) {
+    if (maxFileLifetimeHours === 0) {
         log('warn', 'UPLOAD_MAX_FILE_LIFETIME_HOURS is set to 0! Files will never expire.');
+    }
+
+    maxFileDownloads = parseEnvInt('UPLOAD_MAX_FILE_DOWNLOADS', process.env.UPLOAD_MAX_FILE_DOWNLOADS, 1);
+    log('info', `UPLOAD_MAX_FILE_DOWNLOADS: ${maxFileDownloads}`);
+    if (maxFileDownloads === 0) {
+        log('warn', 'UPLOAD_MAX_FILE_DOWNLOADS is set to 0! Files can be downloaded unlimited times.');
     }
 
     if (!preserveUploads) {
@@ -329,7 +352,7 @@ if (enableUpload) {
 
     uploadRouter.post('/init', limiter, (req, res) => {
         const uploadId = uuidv4();
-        const { filename, lifetime, isEncrypted, totalSize, totalChunks } = req.body;
+        const { filename, lifetime, isEncrypted, totalSize, totalChunks, maxDownloads: clientMaxDownloads } = req.body;
 
         if (isEncrypted && !uploadEnableE2EE) {
             log('debug', 'Rejected an E2EE upload attempt because upload E2EE is disabled on the server.');
@@ -389,6 +412,33 @@ if (enableUpload) {
             }
         }
 
+        // Validate maxDownloads
+        let effectiveMaxDownloads = maxFileDownloads; // Server default
+        if (clientMaxDownloads !== undefined) {
+            if (typeof clientMaxDownloads !== 'number' || !Number.isInteger(clientMaxDownloads) || clientMaxDownloads < 0) {
+                return res.status(400).json({ error: 'Invalid maxDownloads. Must be a non-negative integer.' });
+            }
+            // If server allows unlimited (0), client can choose anything
+            // If server has a limit, client must not exceed it (but can choose 0 for unlimited if server is 0)
+            if (maxFileDownloads === 1) {
+                // Server forces single-download, ignore client preference
+                effectiveMaxDownloads = 1;
+            } else if (maxFileDownloads === 0) {
+                // Server allows unlimited, client can choose
+                effectiveMaxDownloads = clientMaxDownloads;
+            } else {
+                // Server has a limit > 1
+                if (clientMaxDownloads === 0) {
+                    // Client wants unlimited but server has a limit
+                    return res.status(400).json({ error: `Server does not allow unlimited downloads. Max: ${maxFileDownloads}.` });
+                }
+                if (clientMaxDownloads > maxFileDownloads) {
+                    return res.status(400).json({ error: `Max downloads exceeds server limit of ${maxFileDownloads}.` });
+                }
+                effectiveMaxDownloads = clientMaxDownloads;
+            }
+        }
+
         const tempFilePath = path.join(tmpDir, uploadId);
         fs.writeFileSync(tempFilePath, '');
 
@@ -396,6 +446,7 @@ if (enableUpload) {
             filename,
             isEncrypted,
             lifetime: Number(lifetime) || 0,
+            maxDownloads: effectiveMaxDownloads,
             tempFilePath,
             totalSize: size, // Expected final size
             totalChunks: chunks, // Expected chunk count
@@ -538,6 +589,8 @@ if (enableUpload) {
             path: finalPath,
             expiresAt: expiresAt,
             isEncrypted: uploadInfo.isEncrypted,
+            maxDownloads: uploadInfo.maxDownloads,
+            downloadCount: 0,
         });
 
         ongoingUploads.delete(uploadId); // Remove the reservation
@@ -603,12 +656,26 @@ if (enableUpload) {
         readStream.pipe(res);
 
         readStream.on('close', () => {
-            // Update storage immediately
-            currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
+            // Increment download count
+            const newDownloadCount = (fileInfo.downloadCount || 0) + 1;
+            const maxDl = fileInfo.maxDownloads ?? 1;
 
-            fs.rm(fileInfo.path, { force: true }, () => { });
-            fileDatabase.delete(fileId);
-            log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
+            // Check if we should delete the file (maxDownloads reached, or maxDownloads is 1 for legacy behavior)
+            if (maxDl > 0 && newDownloadCount >= maxDl) {
+                // Update storage immediately
+                currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
+
+                fs.rm(fileInfo.path, { force: true }, () => { });
+                fileDatabase.delete(fileId);
+                log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent and deleted (${newDownloadCount}/${maxDl} downloads).${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
+            } else {
+                // Update download count in database
+                fileDatabase.set(fileId, {
+                    ...fileInfo,
+                    downloadCount: newDownloadCount,
+                });
+                log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent (${newDownloadCount}/${maxDl === 0 ? 'unlimited' : maxDl} downloads).`);
+            }
         });
     });
 }
@@ -618,6 +685,7 @@ apiRouter.get('/info', limiter, (req, res) => {
         enabled: enableUpload,
         maxSizeMB: enableUpload ? maxFileSizeMB : undefined,
         maxLifetimeHours: enableUpload ? maxFileLifetimeHours : undefined,
+        maxFileDownloads: enableUpload ? maxFileDownloads : undefined,
         e2ee: enableUpload ? uploadEnableE2EE : undefined,
     };
 
