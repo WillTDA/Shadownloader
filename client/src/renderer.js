@@ -191,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await checkServerCompatibility();
             } catch (error) {
                 connectionStatus.textContent = 'Connection failed. Check URL or if server is running.';
+                updateUploadabilityState(false);
                 connectionStatus.className = 'form-text mt-1 text-danger';
             } finally {
                 testConnectionBtn.disabled = false;
@@ -583,6 +584,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 serverCapabilities = serverInfo.capabilities;
+
+                // Check if uploads are explicitly disabled by the server
+                if (serverCapabilities.upload && serverCapabilities.upload.enabled === false) {
+                    const message = 'File uploads are disabled on this server.';
+                    updateUploadabilityState(false, message);
+                    lastServerCheck = { compatible: false, message };
+                    return lastServerCheck;
+                } else {
+                    updateUploadabilityState(true);
+                }
+
                 applyServerLimits();
 
                 if (!compat.compatible) {
@@ -618,6 +630,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 uploadBtn.disabled = true;
                 console.error('Compatibility check failed:', error);
                 lastServerCheck = { compatible: false, message };
+                updateUploadabilityState(false, message);
                 return lastServerCheck;
             }
         }
@@ -714,6 +727,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
             return true;
+        }
+
+        // Update UI based on whether uploads are enabled
+        function updateUploadabilityState(enabled, message = '') {
+            if (!enabled) {
+                if (message) {
+                    uploadStatus.textContent = message;
+                    uploadStatus.className = 'form-text mt-1 text-danger';
+                }
+
+                // Clear loading text and hide security badge
+                fileLifetimeHelp.textContent = '';
+                maxDownloadsHelp.textContent = '';
+                securityStatus.style.display = 'none';
+
+                // Disable UI interactions
+                uploadBtn.disabled = true;
+                selectFileBtn.disabled = true;
+                dropZone.style.opacity = '0.5';
+                dropZone.style.pointerEvents = 'none';
+
+                // Disable inputs
+                fileLifetimeValueInput.disabled = true;
+                fileLifetimeUnitSelect.disabled = true;
+                maxDownloadsValue.disabled = true;
+            } else {
+                // Re-enable UI
+                selectFileBtn.disabled = false;
+                dropZone.style.opacity = '1';
+                dropZone.style.pointerEvents = 'auto';
+                securityStatus.style.display = 'flex'; // Restore if enabled
+
+                // Inputs will be further refined by applyServerLimits, but enable them generally here
+                fileLifetimeValueInput.disabled = false;
+                fileLifetimeUnitSelect.disabled = false;
+                maxDownloadsValue.disabled = false;
+            }
         }
 
         // Apply server-enforced limits to the UI
