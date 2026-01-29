@@ -377,7 +377,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
-                    maxDownloads: parseInt(maxDownloadsValue.value, 10) || 1,
+                    maxDownloads: (() => {
+                        const val = parseInt(maxDownloadsValue.value, 10);
+                        return (Number.isInteger(val) && val >= 0) ? val : 1;
+                    })(),
                     encrypt: encrypt,
                     onProgress: (evt) => {
                         const payload = {};

@@ -701,7 +701,10 @@ async function startStandardUpload() {
       file,
       encrypt,
       lifetimeMs,
-      maxDownloads: parseInt(els.maxDownloadsValue.value, 10) || 1,
+      maxDownloads: (() => {
+        const val = parseInt(els.maxDownloadsValue.value, 10);
+        return (Number.isInteger(val) && val >= 0) ? val : 1;
+      })(),
       onProgress: ({ phase, text, percent }) => {
         const p = (typeof percent === 'number') ? percent : 0;
         showProgress({
