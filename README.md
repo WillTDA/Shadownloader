@@ -43,7 +43,7 @@ Dropgate was built to make **secure file sharing accessible**, **transparent**, 
 
 - 🔐 **End-to-End Encryption (E2EE)** – Encrypt on the sender device, decrypt on the recipient device. Encryption keys never need to reach the server.
 - 🕵️ **Privacy First** – No analytics, no tracking, and no logging of file contents.
-- 🔗 **Share Links That “Just Work”** – Simple one-time use links for recipients.
+- 🔗 **Share Links That “Just Work”** – Simple links for recipients that expire based on download count or lifetime.
 - 🚀 **Direct Transfer (P2P)** – Great for big files or “zero-storage” sharing (when enabled).
 - 🧩 **Built-in Web UI** – Send and receive from a browser, no install required.
 - ⚙️ **Configurable Server Controls** – Tune size limits, rate limits, retention, and storage caps.
