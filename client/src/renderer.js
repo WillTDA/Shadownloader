@@ -11,7 +11,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
         const selectFileBtn = document.getElementById('select-file-btn');
-        const fileNameDisplay = document.getElementById('file-name');
+        const fileChosen = document.getElementById('file-chosen');
+        const fileChosenName = document.getElementById('file-chosen-name');
+        const fileChosenSize = document.getElementById('file-chosen-size');
+        const maxUploadHint = document.getElementById('max-upload-hint');
         const serverUrlInput = document.getElementById('server-url');
         const testConnectionBtn = document.getElementById('test-connection-btn');
         const connectionStatus = document.getElementById('connection-status');
@@ -76,6 +79,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
 
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes)) return '0 bytes';
+            if (bytes === 0) return '0 bytes';
+            const k = 1000;
+            const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            const v = bytes / Math.pow(k, i);
+            return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
+        }
+
         // --- Initial Settings Load ---
         const settings = await window.electronAPI.getSettings();
         serverUrlInput.value = settings.serverURL || '';
@@ -107,7 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     fileLifetimeValueInput.value = 0.5;
                 }
             }
-            validateLifetimeInput();
+            updateUploadButtonState();
             saveSettings();
         };
 
@@ -115,7 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (maxDownloadsValue.value === '') {
                 maxDownloadsValue.value = 1;
             }
-            validateMaxDownloadsInput();
+            updateUploadButtonState();
             saveSettings();
         };
 
@@ -156,7 +169,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 uploadStatus.textContent = 'Folders cannot be uploaded.';
                 uploadStatus.className = 'form-text mt-1 text-warning';
                 selectedFile = null;
-                fileNameDisplay.textContent = '';
+                fileChosen.hidden = true;
                 fileInput.value = '';
                 uploadBtn.disabled = true;
             }
@@ -292,7 +305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (!file) {
                 selectedFile = null;
-                fileNameDisplay.textContent = '';
+                fileChosen.hidden = true;
                 fileInput.value = '';
                 uploadBtn.disabled = true;
                 return;
@@ -302,19 +315,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                 uploadStatus.textContent = 'Error: Cannot upload empty (0 byte) files.';
                 uploadStatus.className = 'form-text mt-1 text-danger';
                 selectedFile = null;
-                fileNameDisplay.textContent = '';
+                fileChosen.hidden = true;
                 fileInput.value = '';
                 uploadBtn.disabled = true;
                 return;
             }
 
             selectedFile = file;
-            fileNameDisplay.textContent = file.name;
+            fileChosenName.textContent = file.name;
+            fileChosenSize.textContent = formatBytes(file.size);
+            fileChosen.hidden = false;
             linkSection.style.display = 'none';
 
-            // Only enable upload if the last server check was compatible and lifetime is valid
-            uploadBtn.disabled = !lastServerCheck.compatible;
-            validateLifetimeInput();
+            // Only enable upload if all conditions are met
+            updateUploadButtonState();
         }
 
         // Trigger for uploads started from the UI
@@ -620,12 +634,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     uploadStatus.className = 'form-text mt-1 text-info';
                 }
 
-                // Only enable if a file is selected and lifetime is valid
+                // Update button state based on all factors
                 lastServerCheck = { compatible: true, message: compat.message };
-                if (selectedFile) {
-                    uploadBtn.disabled = false;
-                    validateLifetimeInput();
-                }
+                updateUploadButtonState();
 
                 return lastServerCheck;
             } catch (error) {
@@ -650,7 +661,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (limitHours === 0 && unit === 'unlimited') {
                 fileLifetimeHelp.textContent = 'No lifetime limit enforced by the server.';
                 fileLifetimeHelp.className = 'form-text mt-1 text-muted';
-                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
                 return true;
             }
 
@@ -666,7 +676,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (limitHours > 0 && currentMs > limitMs) {
                 fileLifetimeHelp.textContent = `File lifetime too long. Server limit: ${limitHours} hours.`;
                 fileLifetimeHelp.className = 'form-text mt-1 text-danger';
-                uploadBtn.disabled = true;
                 return false;
             } else {
                 // Valid
@@ -677,7 +686,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 fileLifetimeHelp.className = 'form-text mt-1 text-muted';
 
-                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
                 return true;
             }
         }
@@ -692,7 +700,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (isNaN(value) || value < 0) {
                 maxDownloadsHelp.textContent = 'Max downloads must be a non-negative number.';
                 maxDownloadsHelp.className = 'form-text mt-1 text-danger';
-                uploadBtn.disabled = true;
                 return false;
             }
 
@@ -700,7 +707,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (maxFileDownloads === 0) {
                 maxDownloadsHelp.textContent = '0 = unlimited downloads';
                 maxDownloadsHelp.className = 'form-text mt-1 text-muted'; // or text-body-secondary
-                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
                 return true;
             }
 
@@ -715,14 +721,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (value === 0) {
                 maxDownloadsHelp.textContent = `0 (unlimited) not allowed. Server limit: ${maxFileDownloads} downloads.`;
                 maxDownloadsHelp.className = 'form-text mt-1 text-danger';
-                uploadBtn.disabled = true;
                 return false;
             }
 
             if (value > maxFileDownloads) {
                 maxDownloadsHelp.textContent = `Exceeds server limit of ${maxFileDownloads} downloads.`;
                 maxDownloadsHelp.className = 'form-text mt-1 text-danger';
-                uploadBtn.disabled = true;
                 return false;
             }
 
@@ -730,8 +734,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             maxDownloadsHelp.textContent = `Max: ${maxFileDownloads} downloads`;
             maxDownloadsHelp.className = 'form-text mt-1 text-muted';
 
-            if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
             return true;
+        }
+
+        function updateUploadButtonState() {
+            // Check all validity conditions
+            const isLifetimeValid = validateLifetimeInput();
+            const isDownloadsValid = validateMaxDownloadsInput();
+            const isServerCompatible = lastServerCheck.compatible;
+            const isFileSelected = !!selectedFile;
+
+            if (isFileSelected && isServerCompatible && isLifetimeValid && isDownloadsValid) {
+                uploadBtn.disabled = false;
+            } else {
+                uploadBtn.disabled = true;
+            }
         }
 
         // Update UI based on whether uploads are enabled
@@ -745,6 +762,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Clear loading text and hide security badge
                 fileLifetimeHelp.textContent = '';
                 maxDownloadsHelp.textContent = '';
+                maxUploadHint.textContent = '';
                 securityStatus.style.display = 'none';
 
                 // Disable UI interactions
@@ -799,6 +817,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
+            // Update max upload size hint
+            const maxSizeBytes = serverCapabilities.upload.maxSizeMB * 1000 * 1000;
+            if (maxSizeBytes === 0) {
+                maxUploadHint.textContent = 'You can upload files of any size.';
+            } else {
+                maxUploadHint.textContent = `Max upload size: ${formatBytes(maxSizeBytes)}.`;
+            }
+
             // Update Security Status UI (Auto-managed E2EE)
             updateSecurityStatus();
 
@@ -841,13 +867,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             uploadBtn.textContent = 'Upload';
             if (clearFile) {
                 selectedFile = null;
-                fileNameDisplay.textContent = '';
+                fileChosen.hidden = true;
                 fileInput.value = '';
                 uploadBtn.disabled = true;
             } else {
                 // Keep disabled state consistent with current server compatibility + lifetime limits
-                uploadBtn.disabled = !lastServerCheck.compatible;
-                validateLifetimeInput();
+                updateUploadButtonState();
             }
 
             setTimeout(() => {
