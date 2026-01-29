@@ -100,7 +100,7 @@ const state = {
   uploadSession: null,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '2.2.0' });
+const coreClient = new DropgateClient({ clientVersion: '2.2.1' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';

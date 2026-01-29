@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.2.0-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-2.2.1-brightgreen?style=flat-square)
 ![docker](https://img.shields.io/badge/docker-supported-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -136,7 +136,7 @@ Example response:
 ```json
 {
   "name": "Dropgate Server",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "logLevel": "INFO",
   "capabilities": {
     "upload": {
