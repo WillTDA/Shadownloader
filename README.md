@@ -56,6 +56,8 @@ Dropgate was built to make **secure file sharing accessible**, **transparent**, 
 /Dropgate
 ├── client/    # Electron-based uploader app (GPL-3.0)
 ├── server/    # Node.js server + Web UI (AGPL-3.0)
+├── packages/
+│   ├── dropgate-core/      # Shared TypeScript library (Apache-2.0)
 ├── docs/      # Privacy and troubleshooting notes
 ```
 
