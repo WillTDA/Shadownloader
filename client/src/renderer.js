@@ -356,6 +356,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Check if E2EE is available - show warning if not
             if (!hasE2EE) {
+                // Show the window if it's hidden (background upload) so user can see the modal
+                window.electronAPI.showWindow();
                 const confirmed = await showInsecureUploadModal();
                 if (!confirmed) {
                     window.electronAPI.uploadFinished({

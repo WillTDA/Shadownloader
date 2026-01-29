@@ -57,10 +57,10 @@ To install Dropgate Client:
 1. **Launch** the client.
 2. **Enter the server address** you want to connect to (for example, your home server or a private Dropgate instance).
 3. **Select a file** to upload (or drag and drop it into the window).
-4. **Choose your options** (E2EE and file lifetime, depending on what the server allows).
+4. **Choose your options** (E2EE is auto-applied when available, file lifetime, etc.).
 5. **Hit upload!** When it finishes, the **download link is copied to your clipboard**.
 
-**Protip (Windows):** Right-click a file and choose either **"Share with Dropgate"** or **"Share with Dropgate (E2EE)"** to upload silently in the background.
+**Protip (Windows):** Right-click a file and choose **"Share with Dropgate"** to upload in the background. E2EE is auto-applied when available; if not, you'll see a warning.
 
 ### Receiving a file
 

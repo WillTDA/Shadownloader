@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelUpload: () => ipcRenderer.send('cancel-upload'),
     onCancelUpload: (callback) => ipcRenderer.on('cancel-upload-trigger', (_event) => callback()),
     rendererReady: () => ipcRenderer.send('renderer-ready'),
-    openExternal: (url) => ipcRenderer.send('open-external', url)
+    openExternal: (url) => ipcRenderer.send('open-external', url),
+    showWindow: () => ipcRenderer.send('show-window')
 });

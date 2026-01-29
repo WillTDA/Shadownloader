@@ -151,7 +151,7 @@ function getIconPath() {
 
 // Determine if the app was launched SOLELY for a background task.
 // This is a crucial flag to manage the app's lifecycle.
-const wasLaunchedForBackgroundTask = process.argv.some(arg => arg === '--upload' || arg === '--upload-e2ee');
+const wasLaunchedForBackgroundTask = process.argv.some(arg => arg === '--upload');
 
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -167,7 +167,7 @@ if (!gotTheLock) {
         log('=== Second instance detected ===');
         log('commandLine:', commandLine);
 
-        const isBackgroundUpload = commandLine.some(arg => arg === '--upload' || arg === '--upload-e2ee');
+        const isBackgroundUpload = commandLine.some(arg => arg === '--upload');
 
         if (isBackgroundUpload) {
             log('Background upload via second-instance');
@@ -281,9 +281,9 @@ function processUploadQueue() {
     }
 
     isUploading = true;
-    const { filePath, useE2EE } = uploadQueue.shift();
+    const { filePath } = uploadQueue.shift();
     log('Processing upload from queue:', filePath);
-    triggerBackgroundUpload(filePath, useE2EE);
+    triggerBackgroundUpload(filePath);
 }
 
 function handleArgs(argv) {
@@ -311,7 +311,7 @@ function handleArgs(argv) {
         }
 
         // Skip our custom flags
-        if (arg === '--upload' || arg === '--upload-e2ee') {
+        if (arg === '--upload') {
             log('Skipping flag:', arg);
             return false;
         }
@@ -335,10 +335,9 @@ function handleArgs(argv) {
         return;
     }
 
-    const useE2EE = argv.includes('--upload-e2ee');
-    const isUploadAction = argv.includes('--upload') || useE2EE;
+    const isUploadAction = argv.includes('--upload');
 
-    log('Is upload action:', isUploadAction, 'Use E2EE:', useE2EE);
+    log('Is upload action:', isUploadAction);
 
     if (isUploadAction) {
         // Check if this file is already in the queue to prevent duplicates
@@ -348,7 +347,7 @@ function handleArgs(argv) {
             return;
         }
 
-        uploadQueue.push({ filePath, useE2EE });
+        uploadQueue.push({ filePath });
         log('Added to queue. New queue length:', uploadQueue.length);
         processUploadQueue();
     } else {
@@ -478,6 +477,14 @@ ipcMain.on('open-external', (event, url) => {
     }
 });
 
+ipcMain.on('show-window', (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (senderWindow && !senderWindow.isDestroyed()) {
+        senderWindow.show();
+        senderWindow.focus();
+    }
+});
+
 const menuTemplate = [
     {
         label: 'Menu',
@@ -588,7 +595,7 @@ ipcMain.on('renderer-ready', (event) => {
 
     // Check if we have a pending upload for this window
     if (pendingBackgroundUploads.has(windowId)) {
-        const { filePath, useE2EE } = pendingBackgroundUploads.get(windowId);
+        const { filePath } = pendingBackgroundUploads.get(windowId);
         log('Found pending upload for this window:', filePath);
 
         try {
@@ -604,8 +611,7 @@ ipcMain.on('renderer-ready', (event) => {
 
             senderWindow.webContents.send('background-upload-start', {
                 name: fileName,
-                data: fileData,
-                useE2EE: useE2EE
+                data: fileData
             });
 
             // Clear this pending upload
@@ -630,10 +636,9 @@ ipcMain.on('renderer-ready', (event) => {
     }
 });
 
-function triggerBackgroundUpload(filePath, useE2EE) {
+function triggerBackgroundUpload(filePath) {
     log('=== triggerBackgroundUpload called ===');
     log('File:', filePath);
-    log('E2EE:', useE2EE);
     log('File exists:', fs.existsSync(filePath));
 
     if (!fs.existsSync(filePath)) {
@@ -666,7 +671,7 @@ function triggerBackgroundUpload(filePath, useE2EE) {
     log('Created background window with ID:', windowId);
 
     // Store the pending upload BEFORE loading the file
-    pendingBackgroundUploads.set(windowId, { filePath, useE2EE });
+    pendingBackgroundUploads.set(windowId, { filePath });
 
     // Clean up if window is closed before upload starts
     backgroundWindow.on('closed', () => {
