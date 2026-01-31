@@ -909,7 +909,7 @@ async function startP2PSendFlow() {
         els.cancelP2PSend.style.display = 'inline-block';
         els.cancelStandardUpload.style.display = 'none';
       } else {
-        // Default behavior for other statuses
+        // Default behaviour for other statuses
         showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
       }
     },

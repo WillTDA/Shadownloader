@@ -548,7 +548,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
         if (receiverVersion === null) {
           // Receiver didn't respond with hello - might be v1 client
-          // Fall back to v1 behavior (skip handshake)
+          // Fall back to v1 behaviour (skip handshake)
           console.warn('[P2P Send] Receiver did not send hello, assuming v1 protocol');
         } else if (receiverVersion !== P2P_PROTOCOL_VERSION) {
           throw new DropgateNetworkError(
