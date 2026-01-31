@@ -378,7 +378,10 @@ export class DropgateClient {
     const maxMB = Number(caps.maxSizeMB);
     if (Number.isFinite(maxMB) && maxMB > 0) {
       const limitBytes = maxMB * 1000 * 1000;
-      const totalChunks = Math.ceil(fileSize / this.chunkSize);
+      const validationChunkSize = (Number.isFinite(caps.chunkSize) && caps.chunkSize! > 0)
+        ? caps.chunkSize!
+        : this.chunkSize;
+      const totalChunks = Math.ceil(fileSize / validationChunkSize);
       const estimatedBytes = estimateTotalUploadSizeBytes(
         fileSize,
         totalChunks,
@@ -524,7 +527,12 @@ export class DropgateClient {
         }
 
         // 3) Compute reservation sizes
-        const totalChunks = Math.ceil(file.size / this.chunkSize);
+        // Server-provided chunk size takes precedence, then client-configured, then default
+        const serverChunkSize = serverInfo?.capabilities?.upload?.chunkSize;
+        const effectiveChunkSize = (Number.isFinite(serverChunkSize) && serverChunkSize! > 0)
+          ? serverChunkSize!
+          : this.chunkSize;
+        const totalChunks = Math.ceil(file.size / effectiveChunkSize);
         const totalUploadSize = estimateTotalUploadSizeBytes(
           file.size,
           totalChunks,
@@ -590,12 +598,12 @@ export class DropgateClient {
             throw effectiveSignal.reason || new DropgateAbortError();
           }
 
-          const start = i * this.chunkSize;
-          const end = Math.min(start + this.chunkSize, file.size);
+          const start = i * effectiveChunkSize;
+          const end = Math.min(start + effectiveChunkSize, file.size);
           let chunkBlob: Blob | FileSource = file.slice(start, end);
 
           const percentComplete = (i / totalChunks) * 100;
-          const processedBytes = i * this.chunkSize;
+          const processedBytes = i * effectiveChunkSize;
           progress({
             phase: 'chunk',
             text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
@@ -617,8 +625,8 @@ export class DropgateClient {
             uploadBlob = new Blob([chunkBuffer]);
           }
 
-          // Server validates: chunk <= 5MB + 1024
-          if (uploadBlob.size > DEFAULT_CHUNK_SIZE + 1024) {
+          // Server validates: chunk <= configured chunk size + 1024
+          if (uploadBlob.size > effectiveChunkSize + 1024) {
             throw new DropgateValidationError(
               'Chunk too large (client-side). Check chunk size settings.'
             );
@@ -652,7 +660,7 @@ export class DropgateClient {
               progress,
               chunkIndex: i,
               totalChunks,
-              chunkSize: this.chunkSize,
+              chunkSize: effectiveChunkSize,
               fileSizeBytes,
             }
           );
@@ -910,7 +918,10 @@ export class DropgateClient {
 
       if (isEncrypted && cryptoKey) {
         // Encrypted: buffer and decrypt chunks
-        const ENCRYPTED_CHUNK_SIZE = this.chunkSize + ENCRYPTION_OVERHEAD_PER_CHUNK;
+        const downloadChunkSize = (Number.isFinite(compat.serverInfo?.capabilities?.upload?.chunkSize) && compat.serverInfo.capabilities!.upload!.chunkSize! > 0)
+          ? compat.serverInfo.capabilities!.upload!.chunkSize!
+          : this.chunkSize;
+        const ENCRYPTED_CHUNK_SIZE = downloadChunkSize + ENCRYPTION_OVERHEAD_PER_CHUNK;
         const pendingChunks: Uint8Array[] = [];
         let pendingLength = 0;
 

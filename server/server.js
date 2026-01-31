@@ -1,6 +1,7 @@
 process.env.ENABLE_UPLOAD = process.env.ENABLE_UPLOAD || 'true';
 process.env.UPLOAD_ENABLE_E2EE = false;
 process.env.UPLOAD_MAX_FILE_SIZE_MB = 100000;
+process.env.UPLOAD_CHUNK_SIZE_BYTES = 1048576;
 
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
@@ -178,6 +179,7 @@ let MAX_FILE_SIZE_BYTES = Infinity;
 let MAX_STORAGE_BYTES = Infinity;
 let MAX_FILE_LIFETIME_MS = Infinity;
 let maxFileDownloads = 1;
+let uploadChunkSizeBytes = 5 * 1024 * 1024;
 let currentDiskUsage = 0;
 let fileDatabase = null;
 let ongoingUploads = null;
@@ -216,6 +218,13 @@ if (enableUpload) {
     if (maxFileDownloads === 0) {
         log('warn', 'UPLOAD_MAX_FILE_DOWNLOADS is set to 0! Files can be downloaded unlimited times.');
     }
+
+    uploadChunkSizeBytes = parseEnvInt('UPLOAD_CHUNK_SIZE_BYTES', process.env.UPLOAD_CHUNK_SIZE_BYTES, 5 * 1024 * 1024);
+    if (uploadChunkSizeBytes < 65536) {
+        log('error', 'UPLOAD_CHUNK_SIZE_BYTES must be at least 65536 (64KB). Smaller values cause extreme fragmentation and per-chunk overhead.');
+        process.exit(1);
+    }
+    log('info', `UPLOAD_CHUNK_SIZE_BYTES: ${uploadChunkSizeBytes} bytes (${(uploadChunkSizeBytes / (1024 * 1024)).toFixed(2)} MB)`);
 
     if (!preserveUploads) {
         log('info', 'Clearing any existing uploads on startup...');
@@ -513,16 +522,15 @@ if (enableUpload) {
             const buffer = Buffer.concat(chunks);
             log('debug', `Received chunk ${chunkIndex + 1}/${session.totalChunks}. Size: ${(buffer.length / 1000).toFixed(2)} KB`);
 
-            // 1. Verify Size (5MB + Overhead limit)
-            if (buffer.length > (5 * 1024 * 1024) + 1024) return res.status(413).send('Chunk too large.');
+            // 1. Verify Size (chunk size + overhead limit)
+            if (buffer.length > uploadChunkSizeBytes + 1024) return res.status(413).send('Chunk too large.');
 
             // 2. Verify Integrity
             const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
             if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
 
             // Calculate Offset
-            // If encrypted, every chunk (except last) is 5MB + 28 bytes. If plain, 5MB.
-            const CHUNK_BASE = 5 * 1024 * 1024;
+            const CHUNK_BASE = uploadChunkSizeBytes;
             const OVERHEAD = session.isEncrypted ? 28 : 0;
             const OFFSET = chunkIndex * (CHUNK_BASE + OVERHEAD);
 
@@ -691,6 +699,7 @@ apiRouter.get('/info', limiter, (req, res) => {
         maxLifetimeHours: enableUpload ? maxFileLifetimeHours : undefined,
         maxFileDownloads: enableUpload ? maxFileDownloads : undefined,
         e2ee: enableUpload ? uploadEnableE2EE : undefined,
+        chunkSize: enableUpload ? uploadChunkSizeBytes : undefined,
     };
 
     const p2pCapabilities = {

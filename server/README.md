@@ -114,6 +114,7 @@ If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a 
 | `UPLOAD_MAX_STORAGE_GB` | `10` | Max total storage in GB (`0` = unlimited). |
 | `UPLOAD_MAX_FILE_LIFETIME_HOURS` | `24` | Max file lifetime in hours (`0` = unlimited). |
 | `UPLOAD_MAX_FILE_DOWNLOADS` | `1` | Max downloads before file is deleted (`0` = unlimited). |
+| `UPLOAD_CHUNK_SIZE_BYTES` | `5242880` | Upload chunk size in bytes (default 5MB). Minimum `65536` (64KB). Smaller values increase per-chunk overhead; larger values may need proxy body-size adjustments. |
 | `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Cleanup interval for incomplete uploads (`0` = disabled). |
 
 ### Direct Transfer (P2P)
@@ -144,7 +145,8 @@ Example response:
       "maxSizeMB": 100,
       "maxLifetimeHours": 24,
       "maxFileDownloads": 1,
-      "e2ee": true
+      "e2ee": true,
+      "chunkSize": 5242880
     },
     "p2p": {
       "enabled": true,

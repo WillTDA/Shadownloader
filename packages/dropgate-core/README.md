@@ -222,7 +222,7 @@ The main client class for interacting with Dropgate servers.
 | `clientVersion` | `string` | Yes | Client version for compatibility checking |
 | `server` | `string \| ServerTarget` | Yes | Server URL or `{ host, port?, secure? }` |
 | `fallbackToHttp` | `boolean` | No | Auto-retry with HTTP if HTTPS fails in `connect()` |
-| `chunkSize` | `number` | No | Upload chunk size (default: 5MB) |
+| `chunkSize` | `number` | No | Upload chunk size fallback (default: 5MB). The server's configured chunk size (from `/api/info`) takes precedence when available. |
 | `fetchFn` | `FetchFn` | No | Custom fetch implementation |
 | `cryptoObj` | `CryptoAdapter` | No | Custom crypto implementation |
 | `base64` | `Base64Adapter` | No | Custom base64 encoder/decoder |

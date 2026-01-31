@@ -12,6 +12,8 @@ export interface UploadCapabilities {
   maxFileDownloads?: number;
   /** Whether end-to-end encryption is supported. */
   e2ee?: boolean;
+  /** Expected upload chunk size in bytes (server-configured). */
+  chunkSize?: number;
 }
 
 /**
