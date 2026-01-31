@@ -74,9 +74,16 @@ async function startDownload() {
 
   // For plain files in non-secure context, fall back to direct download
   if (!downloadState.isEncrypted && (!window.isSecureContext || !window.streamSaver?.createWriteStream)) {
-    statusTitle.textContent = 'Download Starting';
-    statusMessage.textContent = 'Your download will start in a new request (completion can\'t be tracked on HTTP).';
+    progressContainer.style.display = 'none';
     window.location.href = `/api/file/${downloadState.fileId}`;
+    setStatusSuccess({
+      card,
+      iconContainer,
+      titleEl: statusTitle,
+      messageEl: statusMessage,
+      title: 'Download Started',
+      message: `Your file "${downloadState.fileName}" should be downloading now. Check your browser\'s download bar.`,
+    });
     return;
   }
 
