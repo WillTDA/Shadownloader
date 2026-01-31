@@ -17,7 +17,7 @@
 
 </div>
 
-## 🌍 Overview
+## Overview
 
 **@dropgate/core** is the universal client library for Dropgate. It provides all the core functionality for:
 
@@ -25,17 +25,17 @@
 - Downloading files from Dropgate servers
 - Direct peer-to-peer file transfers (P2P)
 - Server capability detection and version checking
-- Utility functions for URL parsing/building, lifetime conversions, and more
+- Utility functions for lifetime conversions, base64 encoding, and more
 
 This package is **headless** and **environment-agnostic** — it contains no DOM manipulation, no browser-specific APIs, and no Node.js-specific code. All environment-specific concerns (loading PeerJS, handling file streams, etc.) are handled by the consumer.
 
-## 📦 Installation
+## Installation
 
 ```bash
 npm install @dropgate/core
 ```
 
-## 🔨 Builds
+## Builds
 
 The package ships with multiple build targets:
 
@@ -45,83 +45,85 @@ The package ships with multiple build targets:
 | CJS | `dist/index.cjs` | Legacy Node.js, CommonJS |
 | Browser IIFE | `dist/index.browser.js` | `<script>` tag, exposes `DropgateCore` global |
 
-## 🚀 Quick Start
+## Quick Start
 
-### ⬆️ Uploading a File
+### Configure Once, Use Everywhere
+
+All operations go through a single `DropgateClient` instance. Server connection details are specified once in the constructor:
 
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '3.0.0' });
-
-const result = await client.uploadFile({
-  host: 'dropgate.link',
-  port: 443,
-  secure: true,
-  file: myFile, // File or Blob
-  lifetimeMs: 3600000, // 1 hour
-  maxDownloads: 5, // Limit number of downloads
-  encrypt: true,
-  onProgress: ({ phase, text, percent }) => {
-    console.log(`${phase}: ${text} (${percent ? percent : 0}%)`);
-  },
+const client = new DropgateClient({
+  clientVersion: '3.0.0',
+  server: 'https://dropgate.link', // URL string or { host, port?, secure? }
+  fallbackToHttp: true,             // auto-retry HTTP if HTTPS fails (optional)
 });
-
-console.log('Download URL:', result.downloadUrl);
 ```
 
-### ℹ️ Getting Server Info
+### Connecting to the Server
+
+`connect()` fetches server info, checks version compatibility, and caches the result. All methods call `connect()` internally, so explicit calls are optional — useful for "Test Connection" buttons or eager validation.
 
 ```javascript
-import { getServerInfo } from '@dropgate/core';
-
-const { serverInfo } = await getServerInfo({
-  host: 'dropgate.link',
-  secure: true,
-  timeoutMs: 5000,
-});
+const { serverInfo, compatible, message } = await client.connect({ timeoutMs: 5000 });
 
 console.log('Server version:', serverInfo.version);
+console.log('Compatible:', compatible);
 console.log('Upload enabled:', serverInfo.capabilities?.upload?.enabled);
 console.log('P2P enabled:', serverInfo.capabilities?.p2p?.enabled);
 ```
 
-### 🔍 Checking Compatibility
+### Uploading a File
 
 ```javascript
-import { DropgateClient } from '@dropgate/core';
-
-const client = new DropgateClient({ clientVersion: '3.0.0' });
-
-// checkCompatibility fetches server info internally and compares versions
-const compat = await client.checkCompatibility({
-  host: 'dropgate.link',
-  secure: true,
-  timeoutMs: 5000,
+const session = await client.uploadFile({
+  file: myFile, // File or Blob (implements FileSource)
+  lifetimeMs: 3600000, // 1 hour
+  maxDownloads: 5,
+  encrypt: true,
+  onProgress: ({ phase, text, percent }) => {
+    console.log(`${phase}: ${text} (${percent ?? 0}%)`);
+  },
 });
 
-console.log('Compatible:', compat.compatible);
-console.log('Message:', compat.message);
-console.log('Server version:', compat.serverVersion);
-console.log('Client version:', compat.clientVersion);
-// Also returns serverInfo and baseUrl for convenience
-console.log('Server capabilities:', compat.serverInfo.capabilities);
+const result = await session.result;
+console.log('Download URL:', result.downloadUrl);
+
+// Cancel an in-progress upload:
+// session.cancel('User cancelled');
 ```
 
-### 📤 P2P File Transfer (Sender)
+### Downloading a File
 
 ```javascript
-import { startP2PSend } from '@dropgate/core';
+// Download with streaming (for large files)
+const result = await client.downloadFile({
+  fileId: 'abc123',
+  keyB64: 'base64-key-from-url-hash', // Required for encrypted files
+  onProgress: ({ phase, percent, processedBytes, totalBytes }) => {
+    console.log(`${phase}: ${percent}% (${processedBytes}/${totalBytes})`);
+  },
+  onData: async (chunk) => {
+    await writer.write(chunk);
+  },
+});
 
-// Consumer must provide PeerJS Peer constructor
+console.log('Downloaded:', result.filename);
+
+// Or download to memory (for small files — omit onData)
+const memoryResult = await client.downloadFile({ fileId: 'abc123' });
+console.log('File size:', memoryResult.data?.length);
+```
+
+### P2P File Transfer (Sender)
+
+```javascript
 const Peer = await loadPeerJS(); // Your loader function
 
-const session = await startP2PSend({
+const session = await client.p2pSend({
   file: myFile,
   Peer,
-  host: 'dropgate.link',
-  port: 443,
-  secure: true,
   onCode: (code) => console.log('Share this code:', code),
   onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Sending: ${percent.toFixed(1)}%`);
@@ -132,34 +134,24 @@ const session = await startP2PSend({
   onDisconnect: () => console.log('Receiver disconnected'),
 });
 
-// Session control methods
-console.log('Status:', session.getStatus()); // 'listening', 'transferring', etc.
+// Session control
+console.log('Status:', session.getStatus());
 console.log('Bytes sent:', session.getBytesSent());
-console.log('Session ID:', session.sessionId);
-
-// To cancel:
-// session.stop();
+session.stop(); // Cancel
 ```
 
-### 📥 P2P File Transfer (Receiver)
+### P2P File Transfer (Receiver)
 
 ```javascript
-import { startP2PReceive } from '@dropgate/core';
-
 const Peer = await loadPeerJS();
 
-const session = await startP2PReceive({
+const session = await client.p2pReceive({
   code: 'ABCD-1234',
   Peer,
-  host: 'dropgate.link',
-  port: 443,
-  secure: true,
   onMeta: ({ name, total }) => {
     console.log(`Receiving: ${name} (${total} bytes)`);
   },
   onData: async (chunk) => {
-    // Consumer handles file writing (e.g., streamSaver, fs.write)
-    // This is called for each chunk — stream-through for memory efficiency
     await writer.write(chunk);
   },
   onProgress: ({ processedBytes, totalBytes, percent }) => {
@@ -171,37 +163,22 @@ const session = await startP2PReceive({
   onDisconnect: () => console.log('Sender disconnected'),
 });
 
-// Session control methods
-console.log('Status:', session.getStatus()); // 'connecting', 'transferring', etc.
-console.log('Bytes received:', session.getBytesReceived());
-console.log('Total bytes:', session.getTotalBytes());
-
-// To cancel:
-// session.stop();
+session.stop(); // Cancel
 ```
 
-### 📥 P2P File Transfer with Preview (Receiver)
+### P2P with File Preview (Receiver)
 
 Use `autoReady: false` to show a file preview before starting the transfer:
 
 ```javascript
-import { startP2PReceive } from '@dropgate/core';
-
-const Peer = await loadPeerJS();
-let writer;
-
-const session = await startP2PReceive({
+const session = await client.p2pReceive({
   code: 'ABCD-1234',
   Peer,
-  host: 'dropgate.link',
-  secure: true,
-  autoReady: false, // Don't start transfer automatically
+  autoReady: false,
   onMeta: ({ name, total, sendReady }) => {
-    // Show file preview to user
     console.log(`File: ${name} (${total} bytes)`);
     showPreviewUI(name, total);
 
-    // When user confirms, create writer and start transfer
     confirmButton.onclick = () => {
       writer = createWriteStream(name);
       sendReady(); // Signal sender to begin transfer
@@ -217,93 +194,78 @@ const session = await startP2PReceive({
 });
 ```
 
-### ⬇️ Downloading a File
+### Standalone Server Info
+
+For one-off checks before constructing a client:
 
 ```javascript
-import { DropgateClient } from '@dropgate/core';
+import { getServerInfo } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '3.0.0' });
-
-// Download with streaming (for large files)
-const result = await client.downloadFile({
-  host: 'dropgate.link',
-  port: 443,
-  secure: true,
-  fileId: 'abc123',
-  keyB64: 'base64-key-from-url-hash', // Required for encrypted files
-  onProgress: ({ phase, percent, processedBytes, totalBytes }) => {
-    console.log(`${phase}: ${percent}% (${processedBytes}/${totalBytes})`);
-  },
-  onData: async (chunk) => {
-    // Consumer handles file writing (e.g., fs.write, streamSaver)
-    await writer.write(chunk);
-  },
+const { serverInfo } = await getServerInfo({
+  server: 'https://dropgate.link',
+  timeoutMs: 5000,
 });
 
-console.log('Downloaded:', result.filename);
-
-// Or download to memory (for small files)
-const memoryResult = await client.downloadFile({
-  host: 'dropgate.link',
-  secure: true,
-  fileId: 'abc123',
-});
-
-// memoryResult.data contains the complete file as Uint8Array
-console.log('File size:', memoryResult.data?.length);
+console.log('Server version:', serverInfo.version);
 ```
 
-## 📚 API Reference
+## API Reference
 
-### 🔌 DropgateClient
+### DropgateClient
 
 The main client class for interacting with Dropgate servers.
 
-#### ⚙️ Constructor Options
+#### Constructor Options
 
 | Option | Type | Required | Description |
 | --- | --- | --- | --- |
 | `clientVersion` | `string` | Yes | Client version for compatibility checking |
+| `server` | `string \| ServerTarget` | Yes | Server URL or `{ host, port?, secure? }` |
+| `fallbackToHttp` | `boolean` | No | Auto-retry with HTTP if HTTPS fails in `connect()` |
 | `chunkSize` | `number` | No | Upload chunk size (default: 5MB) |
 | `fetchFn` | `FetchFn` | No | Custom fetch implementation |
 | `cryptoObj` | `CryptoAdapter` | No | Custom crypto implementation |
 | `base64` | `Base64Adapter` | No | Custom base64 encoder/decoder |
-| `logger` | `LoggerFn` | No | Custom logger function |
 
-#### 🛠️ Methods
+#### Properties
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `baseUrl` | `string` | Resolved server base URL (may change if HTTP fallback occurs) |
+| `serverTarget` | `ServerTarget` | Derived `{ host, port, secure }` from `baseUrl` |
+
+#### Methods
 
 | Method | Description |
 | --- | --- |
+| `connect(opts?)` | Fetch server info, check compatibility, cache result |
 | `uploadFile(opts)` | Upload a file with optional encryption |
 | `downloadFile(opts)` | Download a file with optional decryption |
-| `checkCompatibility(opts)` | Fetch server info and check client/server version compatibility |
+| `p2pSend(opts)` | Start a P2P send session |
+| `p2pReceive(opts)` | Start a P2P receive session |
 | `validateUploadInputs(opts)` | Validate file and settings before upload |
-| `resolveShareTarget(value, opts)` | Resolve a sharing code via the server |
+| `resolveShareTarget(value, opts?)` | Resolve a sharing code via the server |
 
-### 🔄 P2P Functions
+### P2P Utility Functions
 
 | Function | Description |
 | --- | --- |
-| `startP2PSend(opts)` | Start a P2P send session |
-| `startP2PReceive(opts)` | Start a P2P receive session |
 | `generateP2PCode(cryptoObj?)` | Generate a secure sharing code |
 | `isP2PCodeLike(code)` | Check if a string looks like a P2P code |
 | `isSecureContextForP2P(hostname, isSecureContext)` | Check if P2P is allowed |
 | `isLocalhostHostname(hostname)` | Check if hostname is localhost |
 
-### 🧰 Utility Functions
+### Utility Functions
 
 | Function | Description |
 | --- | --- |
-| `getServerInfo(opts)` | Fetch server info and capabilities |
-| `parseServerUrl(urlStr)` | Parse a URL string into host/port/secure |
-| `buildBaseUrl(opts)` | Build a URL from host/port/secure |
+| `getServerInfo(opts)` | Fetch server info and capabilities (standalone) |
 | `lifetimeToMs(value, unit)` | Convert lifetime to milliseconds |
 | `estimateTotalUploadSizeBytes(...)` | Estimate upload size with encryption overhead |
 | `bytesToBase64(bytes)` | Convert bytes to base64 |
 | `base64ToBytes(b64)` | Convert base64 to bytes |
 
-### ⚠️ Error Classes
+### Error Classes
 
 | Class | Description |
 | --- | --- |
@@ -314,14 +276,15 @@ The main client class for interacting with Dropgate servers.
 | `DropgateAbortError` | Operation aborted |
 | `DropgateTimeoutError` | Operation timed out |
 
-## 🌐 Browser Usage
+## Browser Usage
 
 For browser environments, you can use the IIFE bundle:
 
 ```html
 <script src="/path/to/dropgate-core.browser.js"></script>
 <script>
-  const { DropgateClient, getServerInfo, startP2PSend } = DropgateCore;
+  const { DropgateClient } = DropgateCore;
+  const client = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
   // ...
 </script>
 ```
@@ -330,16 +293,17 @@ Or as an ES module:
 
 ```html
 <script type="module">
-  import { DropgateClient, getServerInfo } from '/path/to/dropgate-core.js';
+  import { DropgateClient } from '/path/to/dropgate-core.js';
+  const client = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
   // ...
 </script>
 ```
 
-## 📋 P2P Consumer Responsibilities
+## P2P Consumer Responsibilities
 
-The P2P functions are designed to be **headless**. The consumer is responsible for:
+The P2P methods are **headless**. The consumer is responsible for:
 
-1. **Loading PeerJS**: Provide the `Peer` constructor to P2P functions
+1. **Loading PeerJS**: Provide the `Peer` constructor to `p2pSend`/`p2pReceive`
 2. **File Writing**: Handle received chunks via `onData` callback (e.g., using streamSaver)
 3. **UI Updates**: React to callbacks (`onProgress`, `onStatus`, etc.)
 
@@ -355,18 +319,18 @@ The P2P implementation is designed for **unlimited file sizes** with constant me
 
 > **Note**: For large files, always use the `onData` callback approach rather than buffering in memory.
 
-## 📜 License
+## License
 
 Licensed under the **Apache-2.0 License**.
 See the [LICENSE](./LICENSE) file for details.
 
-## 📖 Acknowledgements
+## Acknowledgements
 
 * Logo designed by [TheFuturisticIdiot](https://youtube.com/TheFuturisticIdiot)
 * Built with [TypeScript](https://www.typescriptlang.org/)
 * Inspired by the growing need for privacy-respecting, open file transfer tools
 
-## 🙂 Contact Us
+## Contact Us
 
 * **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
 * **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)

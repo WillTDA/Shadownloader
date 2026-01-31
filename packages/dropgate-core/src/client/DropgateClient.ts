@@ -9,30 +9,50 @@ import {
 import type {
   CryptoAdapter,
   FetchFn,
-  LoggerFn,
   ServerInfo,
+  ServerTarget,
   CompatibilityResult,
   ShareTargetResult,
   UploadResult,
   UploadSession,
   UploadProgressEvent,
   DropgateClientOptions,
-  UploadOptions,
+  UploadFileOptions,
   GetServerInfoOptions,
+  ConnectOptions,
   ValidateUploadOptions,
   FileSource,
   Base64Adapter,
-  DownloadOptions,
+  DownloadFileOptions,
   DownloadResult,
   DownloadProgressEvent,
   FileMetadata,
 } from '../types.js';
+import type {
+  P2PSendFileOptions,
+  P2PReceiveFileOptions,
+  P2PSendSession,
+  P2PReceiveSession,
+} from '../p2p/types.js';
 import { getDefaultCrypto, getDefaultFetch, getDefaultBase64 } from '../adapters/defaults.js';
-import { makeAbortSignal, fetchJson, sleep, buildBaseUrl } from '../utils/network.js';
+import { makeAbortSignal, fetchJson, sleep, buildBaseUrl, parseServerUrl } from '../utils/network.js';
 import { parseSemverMajorMinor } from '../utils/semver.js';
 import { validatePlainFilename } from '../utils/filename.js';
 import { sha256Hex, generateAesGcmKey, exportKeyBase64, importKeyFromBase64, decryptChunk, decryptFilenameFromBase64 } from '../crypto/index.js';
 import { encryptToBlob, encryptFilenameToBase64 } from '../crypto/encrypt.js';
+import { startP2PSend } from '../p2p/send.js';
+import { startP2PReceive } from '../p2p/receive.js';
+import { resolvePeerConfig } from '../p2p/helpers.js';
+
+/**
+ * Resolve a server option (URL string or ServerTarget) to a base URL string.
+ */
+function resolveServerToBaseUrl(server: string | ServerTarget): string {
+  if (typeof server === 'string') {
+    return buildBaseUrl(parseServerUrl(server));
+  }
+  return buildBaseUrl(server);
+}
 
 /**
  * Estimate total upload size including encryption overhead.
@@ -57,14 +77,14 @@ export function estimateTotalUploadSizeBytes(
 export async function getServerInfo(
   opts: GetServerInfoOptions
 ): Promise<{ baseUrl: string; serverInfo: ServerInfo }> {
-  const { host, port, secure, timeoutMs = 5000, signal, fetchFn: customFetch } = opts;
+  const { server, timeoutMs = 5000, signal, fetchFn: customFetch } = opts;
 
   const fetchFn = customFetch || getDefaultFetch();
   if (!fetchFn) {
     throw new DropgateValidationError('No fetch() implementation found.');
   }
 
-  const baseUrl = buildBaseUrl({ host, port, secure });
+  const baseUrl = resolveServerToBaseUrl(server);
 
   try {
     const { res, json } = await fetchJson(
@@ -94,8 +114,11 @@ export async function getServerInfo(
 }
 
 /**
- * Headless, environment-agnostic client for Dropgate file uploads.
- * Handles server communication, encryption, and chunked uploads.
+ * Headless, environment-agnostic client for Dropgate file operations.
+ * Handles server communication, encryption, chunked uploads, downloads, and P2P transfers.
+ *
+ * Server connection is configured once in the constructor — all methods use
+ * the stored server URL and cached server info automatically.
  */
 export class DropgateClient {
   /** Client version string for compatibility checking. */
@@ -108,18 +131,32 @@ export class DropgateClient {
   readonly cryptoObj: CryptoAdapter;
   /** Base64 encoder/decoder for binary data. */
   readonly base64: Base64Adapter;
-  /** Optional logger for debug output. */
-  readonly logger: LoggerFn | null;
+
+  /** Resolved base URL (e.g. 'https://dropgate.link'). May change during HTTP fallback. */
+  baseUrl: string;
+
+  /** Whether to automatically retry with HTTP when HTTPS fails. */
+  private _fallbackToHttp: boolean;
+  /** Cached compatibility result (null until first connect()). */
+  private _compat: (CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }) | null = null;
+  /** In-flight connect promise to deduplicate concurrent calls. */
+  private _connectPromise: Promise<CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }> | null = null;
 
   /**
    * Create a new DropgateClient instance.
-   * @param opts - Client configuration options.
-   * @throws {DropgateValidationError} If clientVersion is missing or invalid.
+   * @param opts - Client configuration options including server URL.
+   * @throws {DropgateValidationError} If clientVersion or server is missing or invalid.
    */
   constructor(opts: DropgateClientOptions) {
     if (!opts || typeof opts.clientVersion !== 'string') {
       throw new DropgateValidationError(
         'DropgateClient requires clientVersion (string).'
+      );
+    }
+
+    if (!opts.server) {
+      throw new DropgateValidationError(
+        'DropgateClient requires server (URL string or ServerTarget object).'
       );
     }
 
@@ -141,24 +178,150 @@ export class DropgateClient {
     this.cryptoObj = cryptoObj;
 
     this.base64 = opts.base64 || getDefaultBase64();
-    this.logger = opts.logger || null;
+    this._fallbackToHttp = Boolean(opts.fallbackToHttp);
+
+    // Resolve server to baseUrl
+    this.baseUrl = resolveServerToBaseUrl(opts.server);
+  }
+
+  /**
+   * Get the server target (host, port, secure) derived from the current baseUrl.
+   * Useful for passing to standalone functions that still need a ServerTarget.
+   */
+  get serverTarget(): ServerTarget {
+    const url = new URL(this.baseUrl);
+    return {
+      host: url.hostname,
+      port: url.port ? Number(url.port) : undefined,
+      secure: url.protocol === 'https:',
+    };
+  }
+
+  /**
+   * Connect to the server: fetch server info and check version compatibility.
+   * Results are cached — subsequent calls return instantly without network requests.
+   * Concurrent calls are deduplicated.
+   *
+   * @param opts - Optional timeout and abort signal.
+   * @returns Compatibility result with server info.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an invalid response.
+   */
+  async connect(
+    opts?: ConnectOptions
+  ): Promise<CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }> {
+    // Return cached result if available
+    if (this._compat) return this._compat;
+
+    // Deduplicate concurrent connect calls
+    if (!this._connectPromise) {
+      this._connectPromise = this._fetchAndCheckCompat(opts).finally(() => {
+        this._connectPromise = null;
+      });
+    }
+
+    return this._connectPromise;
+  }
+
+  private async _fetchAndCheckCompat(
+    opts?: ConnectOptions
+  ): Promise<CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }> {
+    const { timeoutMs = 5000, signal } = opts ?? {};
+
+    let baseUrl = this.baseUrl;
+    let serverInfo: ServerInfo;
+
+    try {
+      const result = await getServerInfo({
+        server: baseUrl,
+        timeoutMs,
+        signal,
+        fetchFn: this.fetchFn,
+      });
+      baseUrl = result.baseUrl;
+      serverInfo = result.serverInfo;
+    } catch (err) {
+      // HTTP fallback: if HTTPS failed and fallback is enabled, retry with HTTP
+      if (this._fallbackToHttp && this.baseUrl.startsWith('https://')) {
+        const httpBaseUrl = this.baseUrl.replace('https://', 'http://');
+        try {
+          const result = await getServerInfo({
+            server: httpBaseUrl,
+            timeoutMs,
+            signal,
+            fetchFn: this.fetchFn,
+          });
+          // HTTP worked — update stored baseUrl
+          this.baseUrl = httpBaseUrl;
+          baseUrl = result.baseUrl;
+          serverInfo = result.serverInfo;
+        } catch {
+          // Both failed — throw the original HTTPS error
+          if (err instanceof DropgateError) throw err;
+          throw new DropgateNetworkError('Could not connect to the server.', { cause: err });
+        }
+      } else {
+        if (err instanceof DropgateError) throw err;
+        throw new DropgateNetworkError('Could not connect to the server.', { cause: err });
+      }
+    }
+
+    const compat = this._checkVersionCompat(serverInfo!);
+    this._compat = { ...compat, serverInfo: serverInfo!, baseUrl };
+    return this._compat;
+  }
+
+  /**
+   * Pure version compatibility check (no network calls).
+   */
+  private _checkVersionCompat(serverInfo: ServerInfo): CompatibilityResult {
+    const serverVersion = String(serverInfo?.version || '0.0.0');
+    const clientVersion = String(this.clientVersion || '0.0.0');
+
+    const c = parseSemverMajorMinor(clientVersion);
+    const s = parseSemverMajorMinor(serverVersion);
+
+    if (c.major !== s.major) {
+      return {
+        compatible: false,
+        clientVersion,
+        serverVersion,
+        message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
+      };
+    }
+
+    if (c.minor > s.minor) {
+      return {
+        compatible: true,
+        clientVersion,
+        serverVersion,
+        message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ''}. Some features may not work.`,
+      };
+    }
+
+    return {
+      compatible: true,
+      clientVersion,
+      serverVersion,
+      message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
+    };
   }
 
   /**
    * Resolve a user-entered sharing code or URL via the server.
    * @param value - The sharing code or URL to resolve.
-   * @param opts - Server target and request options.
+   * @param opts - Optional timeout and abort signal.
    * @returns The resolved share target information.
    * @throws {DropgateProtocolError} If the share lookup fails.
    */
   async resolveShareTarget(
     value: string,
-    opts: GetServerInfoOptions
+    opts?: ConnectOptions
   ): Promise<ShareTargetResult> {
-    const { timeoutMs = 5000, signal } = opts;
+    const { timeoutMs = 5000, signal } = opts ?? {};
 
-    // Check server compatibility before resolving
-    const compat = await this.checkCompatibility(opts);
+    // Check server compatibility (uses cache)
+    const compat = await this.connect(opts);
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
@@ -189,69 +352,6 @@ export class DropgateClient {
     }
 
     return (json as ShareTargetResult) || { valid: false, reason: 'Unknown response.' };
-  }
-
-  /**
-   * Check version compatibility between this client and a server.
-   * Fetches server info internally using getServerInfo.
-   * @param opts - Server target and request options.
-   * @returns Compatibility result with status, message, and server info.
-   * @throws {DropgateNetworkError} If the server cannot be reached.
-   * @throws {DropgateProtocolError} If the server returns an invalid response.
-   */
-  async checkCompatibility(
-    opts: GetServerInfoOptions
-  ): Promise<CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }> {
-    let baseUrl: string;
-    let serverInfo: ServerInfo;
-
-    try {
-      const result = await getServerInfo({ ...opts, fetchFn: this.fetchFn });
-      baseUrl = result.baseUrl;
-      serverInfo = result.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not connect to the server.', {
-        cause: err,
-      });
-    }
-
-    const serverVersion = String(serverInfo?.version || '0.0.0');
-    const clientVersion = String(this.clientVersion || '0.0.0');
-
-    const c = parseSemverMajorMinor(clientVersion);
-    const s = parseSemverMajorMinor(serverVersion);
-
-    if (c.major !== s.major) {
-      return {
-        compatible: false,
-        clientVersion,
-        serverVersion,
-        message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
-        serverInfo,
-        baseUrl,
-      };
-    }
-
-    if (c.minor > s.minor) {
-      return {
-        compatible: true,
-        clientVersion,
-        serverVersion,
-        message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ''}. Some features may not work.`,
-        serverInfo,
-        baseUrl,
-      };
-    }
-
-    return {
-      compatible: true,
-      clientVersion,
-      serverVersion,
-      message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
-      serverInfo,
-      baseUrl,
-    };
   }
 
   /**
@@ -327,18 +427,15 @@ export class DropgateClient {
 
   /**
    * Upload a file to the server with optional encryption.
-   * @param opts - Upload options including file, server target, and settings.
-   * @returns Upload result containing the download URL and file identifiers.
+   * @param opts - Upload options including file and settings (no server target needed).
+   * @returns Upload session with result promise and cancellation support.
    * @throws {DropgateValidationError} If input validation fails.
    * @throws {DropgateNetworkError} If the server cannot be reached.
    * @throws {DropgateProtocolError} If the server returns an error.
    * @throws {DropgateAbortError} If the upload is cancelled.
    */
-  async uploadFile(opts: UploadOptions): Promise<UploadSession> {
+  async uploadFile(opts: UploadFileOptions): Promise<UploadSession> {
     const {
-      host,
-      port,
-      secure,
       file,
       lifetimeMs,
       encrypt,
@@ -357,7 +454,6 @@ export class DropgateClient {
 
     let uploadState: 'initializing' | 'uploading' | 'completing' | 'completed' | 'cancelled' | 'error' = 'initializing';
     let currentUploadId: string | null = null;
-    let currentBaseUrl: string | null = null;
 
     const uploadPromise = (async (): Promise<UploadResult> => {
       try {
@@ -372,13 +468,10 @@ export class DropgateClient {
 
         const fileSizeBytes = file.size;
 
-        // 0) Get server info + compat
+        // 0) Get server info + compat (uses cache)
         progress({ phase: 'server-info', text: 'Checking server...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
 
-        const compat = await this.checkCompatibility({
-          host,
-          port,
-          secure,
+        const compat = await this.connect({
           timeoutMs: timeouts.serverInfoMs ?? 5000,
           signal: effectiveSignal,
         });
@@ -479,9 +572,8 @@ export class DropgateClient {
           );
         }
 
-        // Store uploadId and baseUrl for cancellation
+        // Store uploadId for cancellation
         currentUploadId = uploadId;
-        currentBaseUrl = baseUrl;
         uploadState = 'uploading';
 
         // 5) Chunks
@@ -544,7 +636,7 @@ export class DropgateClient {
           };
 
           const chunkUrl = `${baseUrl}/upload/chunk`;
-          await this.attemptChunkUpload(
+          await this._attemptChunkUpload(
             chunkUrl,
             {
               method: 'POST',
@@ -629,9 +721,9 @@ export class DropgateClient {
     })();
 
     // Create cancel endpoint caller
-    const callCancelEndpoint = async (uploadId: string, baseUrl: string): Promise<void> => {
+    const callCancelEndpoint = async (uploadId: string): Promise<void> => {
       try {
-        await fetchJson(this.fetchFn, `${baseUrl}/upload/cancel`, {
+        await fetchJson(this.fetchFn, `${this.baseUrl}/upload/cancel`, {
           method: 'POST',
           timeoutMs: 5000,
           headers: {
@@ -653,8 +745,8 @@ export class DropgateClient {
         uploadState = 'cancelled';
 
         // Call server cancel endpoint if uploadId exists
-        if (currentUploadId && currentBaseUrl) {
-          callCancelEndpoint(currentUploadId, currentBaseUrl).catch(() => { });
+        if (currentUploadId) {
+          callCancelEndpoint(currentUploadId).catch(() => { });
         }
 
         // Abort the controller with a proper error object so AbortError checks work
@@ -672,19 +764,15 @@ export class DropgateClient {
    * cause memory exhaustion for large files. Files exceeding 100MB without an `onData`
    * callback will throw a validation error.
    *
-   * @param opts - Download options including file ID, server target, and optional key.
-   * @param opts.onData - Streaming callback that receives data chunks. Required for files > 100MB.
+   * @param opts - Download options including file ID and optional key (no server target needed).
    * @returns Download result containing filename and received bytes.
    * @throws {DropgateValidationError} If input validation fails or file is too large without onData.
    * @throws {DropgateNetworkError} If the server cannot be reached.
    * @throws {DropgateProtocolError} If the server returns an error.
    * @throws {DropgateAbortError} If the download is cancelled.
    */
-  async downloadFile(opts: DownloadOptions): Promise<DownloadResult> {
+  async downloadFile(opts: DownloadFileOptions): Promise<DownloadResult> {
     const {
-      host,
-      port,
-      secure,
       fileId,
       keyB64,
       onProgress,
@@ -705,13 +793,10 @@ export class DropgateClient {
       throw new DropgateValidationError('File ID is required.');
     }
 
-    // 0) Get server info + compat
+    // 0) Get server info + compat (uses cache)
     progress({ phase: 'server-info', text: 'Checking server...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
-    const compat = await this.checkCompatibility({
-      host,
-      port,
-      secure,
+    const compat = await this.connect({
       timeoutMs,
       signal,
     });
@@ -825,7 +910,6 @@ export class DropgateClient {
 
       if (isEncrypted && cryptoKey) {
         // Encrypted: buffer and decrypt chunks
-        // Use a chunk array to avoid repeated array copying on each read
         const ENCRYPTED_CHUNK_SIZE = this.chunkSize + ENCRYPTION_OVERHEAD_PER_CHUNK;
         const pendingChunks: Uint8Array[] = [];
         let pendingLength = 0;
@@ -966,7 +1050,82 @@ export class DropgateClient {
     };
   }
 
-  private async attemptChunkUpload(
+  /**
+   * Start a P2P send session. Connects to the signalling server and waits for a receiver.
+   *
+   * Server info, peerjsPath, iceServers, and cryptoObj are provided automatically
+   * from the client's cached server info and configuration.
+   *
+   * @param opts - P2P send options (file, Peer constructor, callbacks, tuning).
+   * @returns P2P send session with control methods.
+   * @throws {DropgateValidationError} If P2P is not enabled on the server.
+   * @throws {DropgateNetworkError} If the signalling server cannot be reached.
+   */
+  async p2pSend(opts: P2PSendFileOptions): Promise<P2PSendSession> {
+    const compat = await this.connect();
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
+
+    const { serverInfo } = compat;
+    const p2pCaps = serverInfo?.capabilities?.p2p;
+    if (!p2pCaps?.enabled) {
+      throw new DropgateValidationError('Direct transfer is disabled on this server.');
+    }
+
+    const { host, port, secure } = this.serverTarget;
+    const { path: peerjsPath, iceServers } = resolvePeerConfig({}, p2pCaps);
+
+    return startP2PSend({
+      ...opts,
+      host,
+      port,
+      secure,
+      peerjsPath,
+      iceServers,
+      serverInfo,
+      cryptoObj: this.cryptoObj,
+    });
+  }
+
+  /**
+   * Start a P2P receive session. Connects to a sender via their sharing code.
+   *
+   * Server info, peerjsPath, and iceServers are provided automatically
+   * from the client's cached server info.
+   *
+   * @param opts - P2P receive options (code, Peer constructor, callbacks, tuning).
+   * @returns P2P receive session with control methods.
+   * @throws {DropgateValidationError} If P2P is not enabled on the server.
+   * @throws {DropgateNetworkError} If the signalling server cannot be reached.
+   */
+  async p2pReceive(opts: P2PReceiveFileOptions): Promise<P2PReceiveSession> {
+    const compat = await this.connect();
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
+
+    const { serverInfo } = compat;
+    const p2pCaps = serverInfo?.capabilities?.p2p;
+    if (!p2pCaps?.enabled) {
+      throw new DropgateValidationError('Direct transfer is disabled on this server.');
+    }
+
+    const { host, port, secure } = this.serverTarget;
+    const { path: peerjsPath, iceServers } = resolvePeerConfig({}, p2pCaps);
+
+    return startP2PReceive({
+      ...opts,
+      host,
+      port,
+      secure,
+      peerjsPath,
+      iceServers,
+      serverInfo,
+    });
+  }
+
+  private async _attemptChunkUpload(
     url: string,
     fetchOptions: RequestInit,
     opts: {

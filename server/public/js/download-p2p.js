@@ -1,4 +1,4 @@
-import { getServerInfo, isSecureContextForP2P, startP2PReceive } from './dropgate-core.js';
+import { DropgateClient, isSecureContextForP2P } from './dropgate-core.js';
 import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard, clearStatusBorder } from './status-card.js';
 
 const elTitle = document.getElementById('title');
@@ -94,15 +94,7 @@ const showError = (title, message) => {
   elBar.parentElement.hidden = true;
 };
 
-async function loadServerInfo() {
-  const { serverInfo } = await getServerInfo({
-    host: location.hostname,
-    port: location.port ? Number(location.port) : undefined,
-    secure: location.protocol === 'https:',
-    timeoutMs: 5000,
-  });
-  return serverInfo;
-}
+const client = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
 
 async function loadPeerJS() {
   if (globalThis.Peer) return globalThis.Peer;
@@ -172,19 +164,6 @@ async function start() {
   elTitle.textContent = 'Connecting...';
   elMsg.textContent = `Connecting to ${code}...`;
 
-  let info;
-  try {
-    info = await loadServerInfo();
-  } catch {
-    info = {};
-  }
-
-  const p2p = info?.capabilities?.p2p || {};
-  if (p2p.enabled === false) {
-    showError('Direct transfer disabled', 'This server has P2P disabled.');
-    return;
-  }
-
   // Load PeerJS
   let Peer;
   try {
@@ -195,19 +174,10 @@ async function start() {
     return;
   }
 
-  const peerjsPath = p2p.peerjsPath || '/peerjs';
-  const iceServers = Array.isArray(p2p.iceServers) ? p2p.iceServers : [];
-
   try {
-    p2pSession = await startP2PReceive({
+    p2pSession = await client.p2pReceive({
       code,
       Peer,
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
-      serverInfo: info,
-      peerjsPath,
-      iceServers,
       autoReady: false, // We want to show preview before starting transfer
       onStatus: () => {
         elTitle.textContent = 'Connected';

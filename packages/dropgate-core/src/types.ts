@@ -193,23 +193,15 @@ export interface FileSource {
 }
 
 /**
- * Logger function type for debug and diagnostic output.
- * @param level - Log level (debug, info, warn, error).
- * @param message - Log message.
- * @param meta - Optional metadata object.
- */
-export type LoggerFn = (
-  level: 'debug' | 'info' | 'warn' | 'error',
-  message: string,
-  meta?: unknown
-) => void;
-
-/**
  * Options for constructing a DropgateClient instance.
  */
 export interface DropgateClientOptions {
   /** Client version string for compatibility checking with the server. */
   clientVersion: string;
+  /** Server URL string (e.g. 'https://dropgate.link') or ServerTarget object. Required. */
+  server: string | ServerTarget;
+  /** If true, automatically retry with HTTP when HTTPS connection fails in connect(). Default: false. */
+  fallbackToHttp?: boolean;
   /** Upload chunk size in bytes (default: 5MB). */
   chunkSize?: number;
   /** Custom fetch implementation (uses global fetch by default). */
@@ -218,8 +210,6 @@ export interface DropgateClientOptions {
   cryptoObj?: CryptoAdapter;
   /** Custom base64 encoder/decoder. */
   base64?: Base64Adapter;
-  /** Custom logger function for debug output. */
-  logger?: LoggerFn;
 }
 
 /**
@@ -236,8 +226,9 @@ export interface ServerTarget {
 
 /**
  * Options for uploading a file to the server.
+ * Server connection is configured once in the DropgateClient constructor.
  */
-export interface UploadOptions extends ServerTarget {
+export interface UploadFileOptions {
   /** File to upload. */
   file: FileSource;
   /** File lifetime in milliseconds (0 = server default). */
@@ -279,13 +270,25 @@ export interface UploadOptions extends ServerTarget {
 /**
  * Options for fetching server information.
  */
-export interface GetServerInfoOptions extends ServerTarget {
+export interface GetServerInfoOptions {
+  /** Server URL string (e.g. 'https://dropgate.link') or ServerTarget object. */
+  server: string | ServerTarget;
   /** Request timeout in milliseconds (default: 5000ms). */
   timeoutMs?: number;
   /** AbortSignal to cancel the request. */
   signal?: AbortSignal;
   /** Custom fetch implementation (uses global fetch by default). */
   fetchFn?: FetchFn;
+}
+
+/**
+ * Options for the connect() method on DropgateClient.
+ */
+export interface ConnectOptions {
+  /** Request timeout in milliseconds (default: 5000ms). */
+  timeoutMs?: number;
+  /** AbortSignal to cancel the request. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -328,8 +331,9 @@ export interface DownloadProgressEvent extends BaseProgressEvent {
 
 /**
  * Options for downloading a file.
+ * Server connection is configured once in the DropgateClient constructor.
  */
-export interface DownloadOptions extends ServerTarget {
+export interface DownloadFileOptions {
   /** File ID to download. */
   fileId: string;
   /** Base64-encoded decryption key (required for encrypted files). */

@@ -3,9 +3,7 @@ import { getServerInfo } from './dropgate-core.js';
 (async () => {
   try {
     const { serverInfo } = await getServerInfo({
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
+      server: window.location.origin,
       timeoutMs: 5000,
     });
     const v = serverInfo?.version ? `v${serverInfo.version}` : '';

@@ -17,7 +17,7 @@ const card = document.getElementById('status-card');
 const trustStatement = document.getElementById('trust-statement');
 const encryptionStatement = document.getElementById('encryption-statement');
 
-const client = new DropgateClient({ clientVersion: '3.0.0' });
+const client = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
 
 const downloadState = {
   fileId: null,
@@ -98,9 +98,6 @@ async function startDownload() {
     statusMessage.textContent = 'Streaming directly to file...';
 
     await client.downloadFile({
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
       fileId: downloadState.fileId,
       keyB64: downloadState.keyB64,
       timeoutMs: 0, // No timeout for large file downloads

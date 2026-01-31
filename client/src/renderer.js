@@ -1,4 +1,4 @@
-import { DropgateClient, getServerInfo, lifetimeToMs, parseServerUrl } from './dropgate-core.js';
+import { DropgateClient, lifetimeToMs } from './dropgate-core.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -47,15 +47,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // --- Core client (shared logic for Electron + Web UI) ---
         const clientVersion = await window.electronAPI.getClientVersion();
-        const coreClient = new DropgateClient({
-            clientVersion,
-            logger: (level, message, meta) => {
-                // Keep logs useful, but not spammy.
-                if (level === 'debug') return;
-                const fn = console[level] || console.log;
-                fn.call(console, `[core] ${message}`, meta ?? '');
+        /** @type {DropgateClient|null} */
+        let coreClient = null;
+
+        /**
+         * Create or recreate the core client for a given server URL.
+         * Must be called whenever the server URL changes.
+         */
+        function createClient(serverUrl) {
+            if (!serverUrl) {
+                coreClient = null;
+                return;
             }
-        });
+            coreClient = new DropgateClient({
+                clientVersion,
+                server: serverUrl,
+                fallbackToHttp: true,
+            });
+        }
 
         function isFile(file) {
             return new Promise((resolve) => {
@@ -104,6 +113,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settings.maxDownloads) {
             maxDownloadsValue.value = settings.maxDownloads;
         }
+
+        // Create initial client with loaded server URL
+        createClient(serverUrlInput.value.trim());
 
         await checkServerCompatibility();
 
@@ -190,16 +202,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             connectionStatus.className = 'form-text mt-1 text-muted';
 
             try {
-                const serverTarget = parseServerUrl(serverUrl);
-                await getServerInfo({ ...serverTarget, timeoutMs: 5000 });
+                // Recreate client with current URL (includes HTTP fallback)
+                createClient(serverUrl);
+                await coreClient.connect({ timeoutMs: 5000 });
 
-                if (serverTarget.secure) {
+                const { secure } = coreClient.serverTarget;
+                if (secure) {
                     connectionStatus.textContent = `Connection successful (HTTPS).`;
                     connectionStatus.className = 'form-text mt-1 text-success';
                 } else {
                     connectionStatus.textContent = `Connection successful (HTTP) — connection is insecure.`;
                     connectionStatus.className = 'form-text mt-1 text-warning';
                 }
+
+                // Update input to reflect resolved URL (may have changed due to HTTP fallback)
+                serverUrlInput.value = coreClient.baseUrl;
 
                 await checkServerCompatibility();
             } catch (error) {
@@ -290,6 +307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
                 serverUrlInput.value = settings.serverURL;
+                createClient(settings.serverURL);
 
                 console.log('Starting upload...');
                 // Trigger the centralised upload function
@@ -364,8 +382,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            const serverUrl = serverUrlInput.value.trim();
-            const isTargetSecure = serverUrl.startsWith('https://');
+            const isTargetSecure = coreClient?.baseUrl?.startsWith('https://') ?? false;
             const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
 
             // Check if E2EE is available - show warning if not
@@ -388,9 +405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveSettings();
 
             try {
-                const serverTarget = parseServerUrl(serverUrlInput.value.trim());
                 const session = await coreClient.uploadFile({
-                    ...serverTarget,
                     file: selectedFile,
                     lifetimeMs,
                     maxDownloads: (() => {
@@ -465,8 +480,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // In Electron renderer, location.protocol serves file:// usually or http/https if loaded remotely.
             // But here we are making requests to 'serverUrlInput.value'.
             // So we need to check the active server URL protocol.
-            const serverUrl = serverUrlInput.value.trim();
-            const isTargetSecure = serverUrl.startsWith('https://');
+            const isTargetSecure = coreClient?.baseUrl?.startsWith('https://') ?? false;
             const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
 
             if (hasE2EE) {
@@ -555,41 +569,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             try {
-                // Auto-detect protocol if missing
-                let targetUrl = inputUrl;
-                let autoAddedProtocol = false;
+                // Recreate client if URL changed (client handles HTTP fallback internally)
+                createClient(inputUrl);
+                const compat = await coreClient.connect({ timeoutMs: 5000 });
 
-                if (!inputUrl.match(/^https?:\/\//i)) {
-                    targetUrl = 'https://' + inputUrl;
-                    autoAddedProtocol = true;
-                }
-
-                let serverTarget = parseServerUrl(targetUrl);
-                let compat;
-
-                try {
-                    compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
-
-                    // If we auto-added https and it worked, update the input
-                    if (autoAddedProtocol) {
-                        serverUrlInput.value = targetUrl;
-                        // serverTarget is already correct
-                    }
-                } catch (err) {
-                    // If we guessed HTTPS and it failed, try HTTP
-                    if (autoAddedProtocol) {
-                        console.log('HTTPS auto-detect failed, falling back to HTTP...');
-                        targetUrl = 'http://' + inputUrl;
-                        serverTarget = parseServerUrl(targetUrl);
-                        compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
-
-                        // If this worked, update the input
-                        serverUrlInput.value = targetUrl;
-                    } else {
-                        // User specified protocol or we failed both
-                        throw err;
-                    }
-                }
+                // Update input to reflect resolved URL (may have changed due to HTTP fallback or protocol auto-detect)
+                serverUrlInput.value = coreClient.baseUrl;
 
                 const { serverInfo } = compat;
 

@@ -335,3 +335,102 @@ export interface P2PReceiveSession {
   /** Get the current session ID (if received from sender). */
   getSessionId: () => string | null;
 }
+
+// ============================================================================
+// Client P2P Options (used by DropgateClient.p2pSend / p2pReceive)
+// Server config and serverInfo are provided by the client internally.
+// ============================================================================
+
+/**
+ * Options for DropgateClient.p2pSend().
+ * Server connection, serverInfo, peerjsPath, iceServers, and cryptoObj
+ * are all provided internally by the client.
+ */
+export interface P2PSendFileOptions {
+  /** File to send. */
+  file: FileSource;
+  /** PeerJS Peer constructor - REQUIRED. */
+  Peer: PeerConstructor;
+  /** Custom code generator function. */
+  codeGenerator?: (cryptoObj?: CryptoAdapter) => string;
+  /** Max attempts to register a peer ID. */
+  maxAttempts?: number;
+  /** Chunk size for data transfer. */
+  chunkSize?: number;
+  /** Timeout waiting for end acknowledgment. */
+  endAckTimeoutMs?: number;
+  /** Buffer high water mark for flow control. */
+  bufferHighWaterMark?: number;
+  /** Buffer low water mark for flow control. */
+  bufferLowWaterMark?: number;
+  /** Heartbeat interval in ms for long transfers (default: 5000, 0 to disable). */
+  heartbeatIntervalMs?: number;
+  /** Enable chunk-level acknowledgments for flow control (default: true). */
+  chunkAcknowledgments?: boolean;
+  /** Maximum unacknowledged chunks before pausing (default: 32). */
+  maxUnackedChunks?: number;
+  /** ICE restart timeout in ms (default: 10000). */
+  iceRestartTimeoutMs?: number;
+  /** Callback when code is generated. */
+  onCode?: (code: string, attempt: number) => void;
+  /** Callback for status updates. */
+  onStatus?: (evt: P2PStatusEvent) => void;
+  /** Callback for progress updates. */
+  onProgress?: (evt: P2PSendProgressEvent) => void;
+  /** Callback when transfer completes. */
+  onComplete?: () => void;
+  /** Callback on error. */
+  onError?: (err: Error) => void;
+  /** Callback when receiver disconnects. */
+  onDisconnect?: () => void;
+  /** Callback when transfer is cancelled by either party. */
+  onCancel?: (evt: P2PCancellationEvent) => void;
+  /** Connection health monitoring callback. */
+  onConnectionHealth?: (evt: P2PConnectionHealthEvent) => void;
+  /** Called when receiver requests resume from offset. */
+  onResumeRequest?: (info: P2PResumeInfo) => boolean;
+}
+
+/**
+ * Options for DropgateClient.p2pReceive().
+ * Server connection, serverInfo, peerjsPath, and iceServers
+ * are all provided internally by the client.
+ */
+export interface P2PReceiveFileOptions {
+  /** Sharing code to connect to. */
+  code: string;
+  /** PeerJS Peer constructor - REQUIRED. */
+  Peer: PeerConstructor;
+  /**
+   * Whether to automatically send the "ready" signal after receiving metadata.
+   * Default: true.
+   * Set to false to show a preview and manually control when the transfer starts.
+   * When false, call the sendReady function passed to onMeta to start the transfer.
+   */
+  autoReady?: boolean;
+  /**
+   * Timeout in ms for detecting dead connections (no data received).
+   * Default: 15000 (15 seconds). Set to 0 to disable.
+   */
+  watchdogTimeoutMs?: number;
+  /** Callback for status updates. */
+  onStatus?: (evt: P2PStatusEvent) => void;
+  /**
+   * Callback when file metadata is received.
+   * When autoReady is false, this callback receives a sendReady function
+   * that must be called to signal the sender to begin the transfer.
+   */
+  onMeta?: (evt: P2PMetadataEvent) => void;
+  /** Callback when data chunk is received - consumer handles file writing. */
+  onData?: (chunk: Uint8Array) => Promise<void> | void;
+  /** Callback for progress updates. */
+  onProgress?: (evt: P2PReceiveProgressEvent) => void;
+  /** Callback when transfer completes. */
+  onComplete?: (evt: P2PReceiveCompleteEvent) => void;
+  /** Callback on error. */
+  onError?: (err: Error) => void;
+  /** Callback when sender disconnects. */
+  onDisconnect?: () => void;
+  /** Callback when transfer is cancelled by either party. */
+  onCancel?: (evt: P2PCancellationEvent) => void;
+}

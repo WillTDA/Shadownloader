@@ -1,4 +1,4 @@
-// P2P module exports
+// P2P module exports - internal functions (used by DropgateClient)
 export { startP2PSend } from './send.js';
 export { startP2PReceive } from './receive.js';
 export { generateP2PCode, isP2PCodeLike, isLocalhostHostname, isSecureContextForP2P } from './utils.js';
@@ -46,7 +46,7 @@ export type {
   PeerOptions,
   DataConnection,
   DataConnectionEvents,
-  // P2P config
+  // P2P config (internal)
   P2PServerConfig,
   // P2P event types
   P2PStatusEvent,
@@ -57,9 +57,13 @@ export type {
   P2PConnectionHealthEvent,
   P2PResumeInfo,
   P2PCancellationEvent,
-  // P2P options and sessions
+  // Internal P2P options (used by startP2PSend/startP2PReceive)
   P2PSendOptions,
-  P2PSendSession,
   P2PReceiveOptions,
+  // Sessions
+  P2PSendSession,
   P2PReceiveSession,
+  // Client P2P options (used by DropgateClient.p2pSend/p2pReceive)
+  P2PSendFileOptions,
+  P2PReceiveFileOptions,
 } from './types.js';

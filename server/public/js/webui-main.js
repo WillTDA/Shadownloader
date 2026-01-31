@@ -2,10 +2,8 @@ import {
   DEFAULT_CHUNK_SIZE,
   DropgateClient,
   estimateTotalUploadSizeBytes,
-  getServerInfo,
   isSecureContextForP2P,
   lifetimeToMs,
-  startP2PSend,
 } from './dropgate-core.js';
 
 const $ = (id) => document.getElementById(id);
@@ -129,7 +127,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-const coreClient = new DropgateClient({ clientVersion: '3.0.0' });
+const coreClient = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -465,12 +463,7 @@ function applyLifetimeDefaults() {
 }
 
 async function loadServerInfo() {
-  const { serverInfo: info } = await getServerInfo({
-    host: location.hostname,
-    port: location.port ? Number(location.port) : undefined,
-    secure: location.protocol === 'https:',
-    timeoutMs: 5000,
-  });
+  const { serverInfo: info } = await coreClient.connect({ timeoutMs: 5000 });
   state.info = info;
 
   const upload = info?.capabilities?.upload;
@@ -732,9 +725,6 @@ async function startStandardUpload() {
 
   try {
     const session = await coreClient.uploadFile({
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
       file,
       encrypt,
       lifetimeMs,
@@ -863,15 +853,9 @@ async function startP2PSendFlow() {
   }
 
   els.tagline.textContent = 'Direct Transfer (P2P)';
-  state.p2pSession = await startP2PSend({
+  state.p2pSession = await coreClient.p2pSend({
     file,
     Peer,
-    host: location.hostname,
-    port: location.port ? Number(location.port) : undefined,
-    secure: location.protocol === 'https:',
-    serverInfo: state.info,
-    peerjsPath: state.peerjsPath,
-    iceServers: state.iceServers,
     onCode: (id) => {
       showPanels('p2pwait');
       // Reset visibility of share elements for new session
@@ -1088,9 +1072,6 @@ function wireUI() {
     setDisabled(els.codeGo, true);
     try {
       const result = await coreClient.resolveShareTarget(value, {
-        host: location.hostname,
-        port: location.port ? Number(location.port) : undefined,
-        secure: location.protocol === 'https:',
         timeoutMs: 5000,
       });
       if (!result?.valid || !result?.target) {
