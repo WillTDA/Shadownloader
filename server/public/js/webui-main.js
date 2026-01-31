@@ -254,7 +254,7 @@ function handleFileSelection(file) {
       setMode('p2p');
       showToast('File exceeds the server upload limit — using direct transfer.');
     } else {
-      showToast('File exceeds the server upload limit and cannot be uploaded.');
+      showToast('File exceeds the server upload limit and cannot be uploaded.', 'danger');
     }
   }
 
@@ -287,7 +287,7 @@ function setMode(mode) {
       setMode('p2p');
       return;
     }
-    showToast('File exceeds the server upload limit and cannot be uploaded.');
+    showToast('File exceeds the server upload limit and cannot be uploaded.', 'danger');
   }
 
   updateStartEnabled();
@@ -677,13 +677,13 @@ function copyToClipboard(value) {
 
 async function startStandardUpload() {
   if (!state.uploadEnabled) {
-    showToast('Standard uploads are disabled on this server.');
+    showToast('Standard uploads are disabled on this server.', 'warning');
     return;
   }
 
   const file = state.file;
   if (!file) {
-    showToast('Select a file first.');
+    showToast('Select a file first.', 'warning');
     return;
   }
 
@@ -709,13 +709,13 @@ async function startStandardUpload() {
         showToast('File exceeds the server upload limit — using direct transfer.');
         return startP2PSendFlow();
       }
-      showToast('File exceeds the server upload limit and cannot be uploaded.');
+      showToast('File exceeds the server upload limit and cannot be uploaded.', 'danger');
       return;
     }
   }
 
   if (!validateLifetimeInput()) {
-    showToast('File lifetime exceeds server limits.');
+    showToast('File lifetime exceeds server limits.', 'danger');
     return;
   }
 
@@ -809,7 +809,7 @@ async function startStandardUpload() {
 
     console.error(err);
     showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
-    showToast(err?.message || 'Upload failed.');
+    showToast(err?.message || 'Upload failed.', 'danger');
   }
 }
 
@@ -831,17 +831,17 @@ async function loadPeerJS() {
 
 async function startP2PSendFlow() {
   if (!state.p2pEnabled) {
-    showToast('Direct transfer is disabled on this server.');
+    showToast('Direct transfer is disabled on this server.', 'warning');
     return;
   }
   if (!state.p2pSecureOk) {
-    showToast('Direct transfer requires HTTPS (or localhost).');
+    showToast('Direct transfer requires HTTPS (or localhost).', 'warning');
     return;
   }
 
   const file = state.file;
   if (!file) {
-    showToast('Select a file first.');
+    showToast('Select a file first.', 'warning');
     return;
   }
 
@@ -850,7 +850,7 @@ async function startP2PSendFlow() {
   try {
     Peer = await loadPeerJS();
   } catch (err) {
-    showToast('Failed to load P2P library.');
+    showToast('Failed to load P2P library.', 'danger');
     console.error(err);
     return;
   }
@@ -953,7 +953,7 @@ async function startP2PSendFlow() {
     },
   });
 
-  els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.'));
+  els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.', 'success'));
   els.qrP2PLink.onclick = () => showQRModal(els.p2pLink.value);
   els.cancelP2P.onclick = () => {
     resetTitleProgress();
@@ -1062,13 +1062,13 @@ function wireUI() {
       else await startP2PSendFlow();
     } catch (err) {
       console.error(err);
-      showToast(err?.message || 'Something went wrong.');
+      showToast(err?.message || 'Something went wrong.', 'danger');
       resetToMain();
     }
   });
 
   // Share actions
-  els.copyShare?.addEventListener('click', () => copyToClipboard(els.shareLink.value).then(() => showToast('Copied link.')));
+  els.copyShare?.addEventListener('click', () => copyToClipboard(els.shareLink.value).then(() => showToast('Copied link.', 'success')));
   els.qrShare?.addEventListener('click', () => showQRModal(els.shareLink.value));
   els.newUpload?.addEventListener('click', resetToMain);
 
@@ -1125,7 +1125,7 @@ async function init() {
   } catch (err) {
     console.error(err);
     els.maxUploadHint.textContent = 'Could not load server info.';
-    showToast('Could not load server info.');
+    showToast('Could not load server info.', 'warning');
   }
 
   // Defaults
